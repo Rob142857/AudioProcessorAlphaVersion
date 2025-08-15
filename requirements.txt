@@ -1,0 +1,16 @@
+# Core dependencies (install into the project virtual environment)
+openai-whisper==20250625
+python-docx==1.2.0
+moviepy==2.2.1
+imageio-ffmpeg==0.6.0
+webrtcvad==2.0.10
+deepmultilingualpunctuation==1.0.1
+tqdm>=4.60.0
+
+# PyTorch: install separately for GPU/CUDA compatibility. Example (CPU-only):
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
+# Or for CUDA, pick the correct wheel from https://pytorch.org/get-started/locally/
+# We intentionally avoid pinning torch here to let users choose the right build.
+
+# Optional (improve DirectML support on Windows):
+# pip install torch-directml

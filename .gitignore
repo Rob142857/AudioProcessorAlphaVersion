@@ -11,6 +11,10 @@ __pycache__/
 *.txt
 *.docx
 
+# Keep important text files (don't ignore these even though we ignore *.txt above)
+!requirements.txt
+!README.md
+
 # Audio / Video (generated or large files)
 *.mp3
 *.wav
@@ -24,8 +28,10 @@ __pycache__/
 *.mkv
 
 # FFmpeg binaries and wrappers
-ffmpeg.exe
-ffmpeg.bat
+# We commonly ignore generated binaries, but if a bundled ffmpeg is included in the repo
+# it should be tracked. Negate any broader ignore here so `ffmpeg.exe`/`ffmpeg.bat` can be committed.
+!ffmpeg.exe
+!ffmpeg.bat
 
 # OS files
 .DS_Store
