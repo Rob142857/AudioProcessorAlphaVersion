@@ -174,6 +174,6 @@ if (Test-Path $reqPath){
     Write-Warn "requirements.txt not found at $reqPath — skipping pip install step."
 }
 
-Write-Info "Done. To start using the environment in a NEW PowerShell session, run:`n  conda activate $envName"
-Write-Host "If you plan to install a specific PyTorch wheel (CUDA/DirectML), install it after activating the env as documented in the README." -ForegroundColor Cyan
+Write-Host "[INFO] Done. To start using the environment in a NEW PowerShell session, run:`n  conda activate $envName" -ForegroundColor Cyan
+Write-Host '[INFO] If you plan to install a specific PyTorch wheel (CUDA/DirectML), install it after activating the env as documented in the README.' -ForegroundColor Cyan
 
