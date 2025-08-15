@@ -50,59 +50,20 @@ Read-Host -Prompt "Press Enter to close"
 
 ---
 
-2) Windows ARM64 (Surface) — single-paste bootstrap (Miniforge + conda run)
+2) Windows ARM64 (Surface) — single-paste bootstrap (automated)
 
-Copy and paste the following into PowerShell on a Windows ARM64 machine (Surface). It downloads and runs the Miniforge ARM64 installer, then uses the installed `conda.exe` directly to create an environment, install binary packages, and pip-install the remaining requirements — all in one pasteable script.
+Copy and paste this single command into PowerShell on a Windows ARM64 machine. It clones the repo and runs the automated ARM bootstrap script that handles Miniforge download, installation, conda env creation, and dependency installation:
 
 ```powershell
-Set-Location "$env:USERPROFILE\Downloads"
-
-# Clone or update the repo first so the helper script is available
-if (Test-Path .\speech2textrme) {
-	Write-Host 'Using existing folder: speech2textrme'
-	Set-Location .\speech2textrme
-	if (Get-Command git -ErrorAction SilentlyContinue) { git pull }
-} else {
-	if (Get-Command git -ErrorAction SilentlyContinue) {
-		git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme
-	} else {
-		$zip = 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip'
-		Invoke-WebRequest $zip -OutFile main.zip
-		Expand-Archive main.zip -DestinationPath .
-		Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme'
-	}
-	Set-Location .\speech2textrme
-}
-
-# If the repository helper exists, run it to perform the Miniforge/conda bootstrap automatically.
-if (Test-Path .\run_conda.ps1) {
-	Write-Host "Found run_conda.ps1 — running automated ARM bootstrap (this will download Miniforge and create the conda env)."
-	powershell -ExecutionPolicy RemoteSigned -File .\run_conda.ps1
-	Read-Host -Prompt "Bootstrap script finished. Press Enter to close"
-} else {
-	# Fallback: inline minimal flow if helper script isn't present (keeps previous behavior)
-	Write-Host "run_conda.ps1 not found — falling back to inline Miniforge installer flow."
-	$mf = "$env:TEMP\Miniforge3-Windows-arm64.exe"
-	Invoke-WebRequest "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Windows-arm64.exe" -OutFile $mf
-	Start-Process -FilePath $mf -Wait
-
-	$condaExe = Join-Path $env:USERPROFILE "Miniforge3\Scripts\conda.exe"
-	if (-not (Test-Path $condaExe)) {
-		Write-Host "Miniforge not found at $condaExe — if you installed to a different folder, update the path and rerun."
-		Read-Host -Prompt "Press Enter to exit"
-		exit 1
-	}
-
-	& $condaExe create -n speech2textrme python=3.11 -y
-	& $condaExe run -n speech2textrme conda install -c conda-forge numpy numba meson ninja -y
-	& $condaExe run -n speech2textrme python -m pip install --upgrade pip
-	& $condaExe run -n speech2textrme python -m pip install -r requirements.txt
-
-	Write-Host ""
-	Write-Host "Conda bootstrap complete. To use interactively: conda activate speech2textrme" 
-	Read-Host -Prompt "Press Enter to close"
-}
+Set-Location "$env:USERPROFILE\Downloads"; if (Test-Path .\speech2textrme) { Set-Location .\speech2textrme; if (Get-Command git -ErrorAction SilentlyContinue) { git pull } } else { if (Get-Command git -ErrorAction SilentlyContinue) { git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme } else { Invoke-WebRequest 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip' -OutFile main.zip; Expand-Archive main.zip -DestinationPath .; Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme' }; Set-Location .\speech2textrme }; if (Test-Path .\run_conda.ps1) { Write-Host 'Running automated ARM bootstrap...'; powershell -ExecutionPolicy RemoteSigned -File .\run_conda.ps1 } else { Write-Host 'Helper script not found - download repo manually' }
 ```
+
+This command:
+- Goes to your Downloads folder
+- Clones or updates the repository
+- Runs `run_conda.ps1` which automatically downloads Miniforge, installs it, creates a conda environment, and installs all dependencies
+
+After this completes, activate the environment with: `conda activate speech2textrme`
 
 ## Fastest path (one-liner for interactive use)
 Open PowerShell in the repo root and run the included `run.bat`. It will create the venv, install the pinned dependencies (non-PyTorch), and launch the GUI.
