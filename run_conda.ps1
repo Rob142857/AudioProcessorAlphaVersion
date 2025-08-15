@@ -158,7 +158,7 @@ Write-Info "Installing binary packages from conda-forge: numpy, numba, meson, ni
 try{
     & "$condaExe" run -n $envName conda install -c conda-forge numpy numba meson ninja -y | Write-Host
 } catch {
-    Write-Warn "conda install failed or was interrupted. You can try running: \n  & \"$condaExe\" run -n $envName conda install -c conda-forge numpy numba meson ninja -y\nManually in a new shell."
+    Write-Warn "conda install failed or was interrupted. You can try running:`n  & `"$condaExe`" run -n $envName conda install -c conda-forge numpy numba meson ninja -y`nManually in a new shell."
 }
 
 # Upgrade pip and pip-install remaining requirements
