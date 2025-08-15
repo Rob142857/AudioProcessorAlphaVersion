@@ -2,7 +2,7 @@
 
 Usage:
   - GUI mode (default): python gui_transcribe.py
-  - CLI mode: python gui_transcribe.py --input "C:\path\file.mp4" --outdir "C:\path\dest"
+  - CLI mode: python gui_transcribe.py --input "C:\\path\\file.mp4" --outdir "C:\\path\\dest"
 
 The GUI defaults output folder to the user's Downloads folder.
 """
@@ -43,7 +43,8 @@ def run_transcription(input_file: str, outdir: str, options: dict, output_queue:
                                   bitrate=options.get("bitrate", "192k"),
                                   device_preference=options.get("device", "auto"),
                                   vad=options.get("vad", False),
-                                  punctuate=options.get("punctuate", False))
+                                  punctuate=options.get("punctuate", False),
+                                  output_dir=outdir)
         output_queue.put(f"Transcription finished. TXT: {out_txt}\n")
     except Exception as e:
         output_queue.put(f"Transcription failed: {e}\n")
@@ -181,11 +182,9 @@ def launch_gui(default_outdir: str = None):
             "device": device_var.get(),
         }
 
-        # Change working dir to outd so outputs are created there by default for converted files
+        # No need to change working dir since we pass output_dir explicitly
         def worker():
-            orig_cwd = os.getcwd()
             try:
-                os.chdir(outd)
                 # Redirect prints from transcribe to the queue
                 old_out, old_err = sys.stdout, sys.stderr
                 sys.stdout = QueueWriter(q)
@@ -195,8 +194,8 @@ def launch_gui(default_outdir: str = None):
                 finally:
                     sys.stdout = old_out
                     sys.stderr = old_err
-            finally:
-                os.chdir(orig_cwd)
+            except Exception as e:
+                q.put(f"Worker error: {e}\n")
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()

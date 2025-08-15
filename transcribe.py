@@ -214,7 +214,7 @@ def get_media_duration(path):
             return None
 
 
-def transcribe_file(input_path, model_name="base", preprocess=False, keep_temp=False, bitrate="192k", device_preference="auto", vad=False, punctuate=False):
+def transcribe_file(input_path, model_name="base", preprocess=False, keep_temp=False, bitrate="192k", device_preference="auto", vad=False, punctuate=False, output_dir=None):
     ensure_ffmpeg_in_path()
 
     start_time = time.time()
@@ -292,7 +292,15 @@ def transcribe_file(input_path, model_name="base", preprocess=False, keep_temp=F
         # clean fillers
         full_text = clean_fillers(full_text)
 
-        out_txt_path = os.path.splitext(audio_path)[0] + ".txt"
+        # Determine output directory and base filename
+        if output_dir:
+            # Use the specified output directory
+            output_base = os.path.join(output_dir, os.path.splitext(os.path.basename(input_path))[0])
+        else:
+            # Use the same directory as the audio file
+            output_base = os.path.splitext(audio_path)[0]
+
+        out_txt_path = output_base + ".txt"
         with open(out_txt_path, "w", encoding="utf-8") as f:
             f.write(full_text)
         print(f"Transcription saved to {out_txt_path}")
@@ -302,7 +310,7 @@ def transcribe_file(input_path, model_name="base", preprocess=False, keep_temp=F
         doc.add_heading("Transcription", 0)
         for para in split_into_paragraphs(full_text):
             doc.add_paragraph(para)
-        out_docx = os.path.splitext(audio_path)[0] + ".docx"
+        out_docx = output_base + ".docx"
         doc.save(out_docx)
         print(f"Word document saved to {out_docx}")
         log_outputs.append(os.path.abspath(out_docx))
@@ -497,13 +505,14 @@ def main(argv=None):
     parser.add_argument("--device", default="auto", help="device preference: auto/cpu/cuda/mps/dml")
     parser.add_argument("--vad", action="store_true", help="use voice activity detection to segment audio")
     parser.add_argument("--punctuate", action="store_true", help="run punctuation restoration on transcript")
+    parser.add_argument("--output-dir", help="output directory for txt and docx files (default: same as input)")
     args = parser.parse_args(argv)
 
     if not os.path.isfile(args.input):
         print(f"File not found: {args.input}")
         sys.exit(1)
 
-    transcribe_file(args.input, model_name=args.model, preprocess=args.preprocess, keep_temp=args.keep_temp, bitrate=args.bitrate, device_preference=args.device, vad=args.vad, punctuate=args.punctuate)
+    transcribe_file(args.input, model_name=args.model, preprocess=args.preprocess, keep_temp=args.keep_temp, bitrate=args.bitrate, device_preference=args.device, vad=args.vad, punctuate=args.punctuate, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":
