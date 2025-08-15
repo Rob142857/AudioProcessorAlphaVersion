@@ -57,20 +57,7 @@ Copy and paste the following into PowerShell on a Windows ARM64 machine (Surface
 ```powershell
 Set-Location "$env:USERPROFILE\Downloads"
 
-# Download Miniforge installer for Windows ARM64
-$mf = "$env:TEMP\Miniforge3-Windows-arm64.exe"
-Invoke-WebRequest "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Windows-arm64.exe" -OutFile $mf
-Start-Process -FilePath $mf -Wait
-
-# Resolve the default conda executable path (adjust if you installed Miniforge somewhere else)
-$condaExe = Join-Path $env:USERPROFILE "Miniforge3\Scripts\conda.exe"
-if (-not (Test-Path $condaExe)) {
-	Write-Host "Miniforge not found at $condaExe — if you installed to a different folder, update the path and rerun."
-	Read-Host -Prompt "Press Enter to exit"
-	exit 1
-}
-
-# Ensure repo is present
+# Clone or update the repo first so the helper script is available
 if (Test-Path .\speech2textrme) {
 	Write-Host 'Using existing folder: speech2textrme'
 	Set-Location .\speech2textrme
@@ -87,17 +74,34 @@ if (Test-Path .\speech2textrme) {
 	Set-Location .\speech2textrme
 }
 
-# Create conda env and install binary deps from conda-forge
-& $condaExe create -n speech2textrme python=3.11 -y
-& $condaExe run -n speech2textrme conda install -c conda-forge numpy numba meson ninja -y
+# If the repository helper exists, run it to perform the Miniforge/conda bootstrap automatically.
+if (Test-Path .\run_conda.ps1) {
+	Write-Host "Found run_conda.ps1 — running automated ARM bootstrap (this will download Miniforge and create the conda env)."
+	powershell -ExecutionPolicy RemoteSigned -File .\run_conda.ps1
+	Read-Host -Prompt "Bootstrap script finished. Press Enter to close"
+} else {
+	# Fallback: inline minimal flow if helper script isn't present (keeps previous behavior)
+	Write-Host "run_conda.ps1 not found — falling back to inline Miniforge installer flow."
+	$mf = "$env:TEMP\Miniforge3-Windows-arm64.exe"
+	Invoke-WebRequest "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Windows-arm64.exe" -OutFile $mf
+	Start-Process -FilePath $mf -Wait
 
-# Use conda run to pip-install the remaining requirements into the conda env
-& $condaExe run -n speech2textrme python -m pip install --upgrade pip
-& $condaExe run -n speech2textrme python -m pip install -r requirements.txt
+	$condaExe = Join-Path $env:USERPROFILE "Miniforge3\Scripts\conda.exe"
+	if (-not (Test-Path $condaExe)) {
+		Write-Host "Miniforge not found at $condaExe — if you installed to a different folder, update the path and rerun."
+		Read-Host -Prompt "Press Enter to exit"
+		exit 1
+	}
 
-Write-Host ""
-Write-Host "Conda bootstrap complete. To use interactively: conda activate speech2textrme" 
-Read-Host -Prompt "Press Enter to close"
+	& $condaExe create -n speech2textrme python=3.11 -y
+	& $condaExe run -n speech2textrme conda install -c conda-forge numpy numba meson ninja -y
+	& $condaExe run -n speech2textrme python -m pip install --upgrade pip
+	& $condaExe run -n speech2textrme python -m pip install -r requirements.txt
+
+	Write-Host ""
+	Write-Host "Conda bootstrap complete. To use interactively: conda activate speech2textrme" 
+	Read-Host -Prompt "Press Enter to close"
+}
 ```
 
 ## Fastest path (one-liner for interactive use)
