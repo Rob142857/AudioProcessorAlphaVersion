@@ -21,6 +21,22 @@ except Exception:
     torch_directml = None
 
 
+def format_duration(seconds):
+    """Convert seconds to a readable time format (HH:MM:SS or MM:SS)."""
+    if seconds is None:
+        return None
+    
+    seconds = round(seconds, 2)
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = seconds % 60
+    
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:05.2f}"
+    else:
+        return f"{minutes:02d}:{secs:05.2f}"
+
+
 def split_into_paragraphs(text, max_length=500):
     paras = []
     current = []
@@ -324,25 +340,32 @@ def transcribe_file(input_path, model_name="base", preprocess=False, keep_temp=F
 
         # write log file next to the output txt (or next to input if outputs were temp)
         orig_base = os.path.splitext(os.path.basename(input_path))[0]
-        log_name = f"{orig_base}_transcription_log.json"
+        log_name = f"{orig_base}_transcription_log.txt"
         # prefer writing next to project folder or same dir as output
         log_dir = os.path.dirname(os.path.abspath(out_txt_path)) if out_txt_path else os.path.dirname(os.path.abspath(input_path))
         log_path = os.path.join(log_dir, log_name)
-        log = {
-            "input_file": os.path.abspath(input_path),
-            "model": model_name,
-            "device": device,
-            "preprocess": bool(preprocess),
-            "vad": bool(vad),
-            "punctuate": bool(punctuate),
-            "time_taken_seconds": round(elapsed, 2),
-            "original_length_seconds": None if media_length is None else round(media_length, 2),
-            "outputs": log_outputs,
-            "temp_files_removed": not keep_temp,
-        }
+        
+        # Convert paths to forward slashes for readability
+        input_path_clean = os.path.abspath(input_path).replace('\\', '/')
+        output_paths_clean = [os.path.abspath(p).replace('\\', '/') for p in log_outputs]
+        
         try:
             with open(log_path, "w", encoding="utf-8") as lf:
-                json.dump(log, lf, indent=2)
+                lf.write("TRANSCRIPTION LOG\n")
+                lf.write("=" * 50 + "\n\n")
+                lf.write(f"Input File: {input_path_clean}\n")
+                lf.write(f"Model: {model_name}\n")
+                lf.write(f"Device: {device}\n")
+                lf.write(f"Preprocess: {bool(preprocess)}\n")
+                lf.write(f"VAD Segmentation: {bool(vad)}\n")
+                lf.write(f"Punctuation Restore: {bool(punctuate)}\n")
+                lf.write(f"Processing Time: {format_duration(elapsed)}\n")
+                if media_length is not None:
+                    lf.write(f"Original Length: {format_duration(media_length)}\n")
+                lf.write(f"Temp Files Removed: {not keep_temp}\n\n")
+                lf.write("Output Files:\n")
+                for output_path in output_paths_clean:
+                    lf.write(f"  - {output_path}\n")
             print(f"Log written to {log_path}")
         except Exception as e:
             print(f"Failed to write log file: {e}")

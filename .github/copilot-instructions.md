@@ -21,16 +21,24 @@ python -m pip install -r requirements.txt
 - CUDA (example): `python -m pip install torch --index-url https://download.pytorch.org/whl/cu118`
 - DirectML: install `torch-directml` manually for your PyTorch build and use `--device dml`.
 
-4) Ensure `ffmpeg` is on PATH. If not available, install via winget or add a static build to PATH.
+4) **Preload Whisper models** (recommended to avoid first-run delays):
 
-5) Optional quick environment check (writes `env_report.json`):
+```powershell
+python preload_models.py
+```
+
+This downloads and caches the medium model (~1.4GB). The `run.bat` script automatically does this when PyTorch is installed via options 2 or 3.
+
+5) Ensure `ffmpeg` is on PATH. If not available, install via winget or add a static build to PATH.
+
+6) Optional quick environment check (writes `env_report.json`):
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 python check_env.py
 ```
 
-6) Launch GUI or run headless (example):
+7) Launch GUI or run headless (example):
 
 ```powershell
 python gui_transcribe.py

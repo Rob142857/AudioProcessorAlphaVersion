@@ -76,5 +76,12 @@ if (Test-Path $reqPath) {
     & "$condaExe" run -n speech2textrme python -m pip install -r "$reqPath"
 }
 
+# Preload Whisper medium model
+$preloadPath = Join-Path $PSScriptRoot 'preload_models.py'
+if (Test-Path $preloadPath) {
+    Write-Host "[INFO] Preloading Whisper medium model..." -ForegroundColor Cyan
+    & "$condaExe" run -n speech2textrme python "$preloadPath"
+}
+
 Write-Host "Bootstrap complete!" -ForegroundColor Green
 Write-Host "To activate: conda activate speech2textrme" -ForegroundColor Cyan

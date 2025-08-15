@@ -22,7 +22,8 @@ try:
 except Exception:
     tk = None
 
-DEFAULT_DOWNLOADS = Path.home() / "Downloads"
+# Use os.path.normpath to ensure proper Windows backslashes
+DEFAULT_DOWNLOADS = os.path.normpath(str(Path.home() / "Downloads"))
 
 # Small helper to run transcription (imports transcribe lazily)
 def run_transcription(input_file: str, outdir: str, options: dict, output_queue: queue.Queue):
@@ -90,8 +91,9 @@ def launch_gui(default_outdir: str = None):
 
     ttk.Button(mainframe, text="Browse...", command=browse_input).grid(column=4, row=0)
 
-    # Output dir
-    outdir_var = tk.StringVar(value=str(default_outdir or DEFAULT_DOWNLOADS))
+    # Output dir - ensure consistent backslash formatting
+    display_outdir = os.path.normpath(str(default_outdir)) if default_outdir else DEFAULT_DOWNLOADS
+    outdir_var = tk.StringVar(value=display_outdir)
     ttk.Label(mainframe, text="Output folder:").grid(column=0, row=1, sticky=tk.W)
     out_entry = ttk.Entry(mainframe, textvariable=outdir_var, width=70)
     out_entry.grid(column=1, row=1, columnspan=3, sticky=(tk.W, tk.E))
@@ -99,7 +101,8 @@ def launch_gui(default_outdir: str = None):
     def browse_outdir():
         p = filedialog.askdirectory(title="Select output folder", initialdir=outdir_var.get())
         if p:
-            outdir_var.set(p)
+            # Normalize the path to use proper Windows backslashes
+            outdir_var.set(os.path.normpath(p))
 
     ttk.Button(mainframe, text="Browse...", command=browse_outdir).grid(column=4, row=1)
 
@@ -107,9 +110,9 @@ def launch_gui(default_outdir: str = None):
     opts_frame = ttk.LabelFrame(mainframe, text="Options")
     opts_frame.grid(column=0, row=2, columnspan=5, pady=8, sticky=(tk.W, tk.E))
 
-    model_var = tk.StringVar(value="base")
+    model_var = tk.StringVar(value="medium")
     ttk.Label(opts_frame, text="Model:").grid(column=0, row=0, sticky=tk.W)
-    model_combo = ttk.Combobox(opts_frame, textvariable=model_var, values=("tiny", "base", "small", "medium", "large"), state="readonly", width=10)
+    model_combo = ttk.Combobox(opts_frame, textvariable=model_var, values=("medium", "large"), state="readonly", width=10)
     model_combo.grid(column=1, row=0, sticky=tk.W)
 
     preprocess_var = tk.BooleanVar(value=False)
@@ -161,7 +164,7 @@ def launch_gui(default_outdir: str = None):
 
     def start_transcription_thread():
         inp = input_var.get().strip()
-        outd = outdir_var.get().strip() or str(DEFAULT_DOWNLOADS)
+        outd = outdir_var.get().strip() or DEFAULT_DOWNLOADS
         if not inp or not os.path.isfile(inp):
             messagebox.showerror("Input required", "Please select a valid input audio/video file.")
             return
@@ -220,7 +223,7 @@ def main():
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
-    outdir = args.outdir or str(DEFAULT_DOWNLOADS)
+    outdir = args.outdir or DEFAULT_DOWNLOADS
 
     if args.input:
         # run headless
