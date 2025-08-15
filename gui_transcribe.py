@@ -1,0 +1,257 @@
+"""Simple GUI and CLI wrapper for `transcribe.transcribe_file`.
+
+Usage:
+  - GUI mode (default): python gui_transcribe.py
+  - CLI mode: python gui_transcribe.py --input "C:\path\file.mp4" --outdir "C:\path\dest"
+
+The GUI defaults output folder to the user's Downloads folder.
+"""
+import argparse
+import os
+import threading
+import queue
+import sys
+from pathlib import Path
+
+# Defer importing heavy modules (whisper/torch) until we actually run a transcription.
+# This allows --help and launching the GUI quickly without loading models.
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox
+except Exception:
+    tk = None
+
+DEFAULT_DOWNLOADS = Path.home() / "Downloads"
+
+# Small helper to run transcription (imports transcribe lazily)
+def run_transcription(input_file: str, outdir: str, options: dict, output_queue: queue.Queue):
+    """Call transcribe.transcribe_file with given args and stream prints to output_queue."""
+    try:
+        # Import here to avoid heavy imports during GUI startup
+        from transcribe import transcribe_file
+    except Exception as e:
+        output_queue.put(f"Failed to import transcribe module: {e}\n")
+        return
+
+    try:
+        output_queue.put(f"Starting transcription for: {input_file}\n")
+        out_txt = transcribe_file(input_file,
+                                  model_name=options.get("model", "base"),
+                                  preprocess=options.get("preprocess", False),
+                                  keep_temp=options.get("keep_temp", False),
+                                  bitrate=options.get("bitrate", "192k"),
+                                  device_preference=options.get("device", "auto"),
+                                  vad=options.get("vad", False),
+                                  punctuate=options.get("punctuate", False))
+        output_queue.put(f"Transcription finished. TXT: {out_txt}\n")
+    except Exception as e:
+        output_queue.put(f"Transcription failed: {e}\n")
+
+
+class QueueWriter:
+    """A file-like writer that puts text into a queue."""
+    def __init__(self, q: queue.Queue):
+        self.q = q
+
+    def write(self, msg):
+        if msg:
+            self.q.put(str(msg))
+
+    def flush(self):
+        pass
+
+
+def launch_gui(default_outdir: str = None):
+    if tk is None:
+        print("Tkinter is not available in this Python build.")
+        return
+
+    root = tk.Tk()
+    root.title("Speech2Text GUI")
+    root.geometry("720x520")
+
+    mainframe = ttk.Frame(root, padding="8 8 8 8")
+    mainframe.grid(column=0, row=0, sticky=(tk.N, tk.W, tk.E, tk.S))
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+
+    # Input file
+    input_var = tk.StringVar()
+    ttk.Label(mainframe, text="Input file:").grid(column=0, row=0, sticky=tk.W)
+    input_entry = ttk.Entry(mainframe, textvariable=input_var, width=70)
+    input_entry.grid(column=1, row=0, columnspan=3, sticky=(tk.W, tk.E))
+
+    def browse_input():
+        p = filedialog.askopenfilename(title="Select audio/video file")
+        if p:
+            input_var.set(p)
+
+    ttk.Button(mainframe, text="Browse...", command=browse_input).grid(column=4, row=0)
+
+    # Output dir
+    outdir_var = tk.StringVar(value=str(default_outdir or DEFAULT_DOWNLOADS))
+    ttk.Label(mainframe, text="Output folder:").grid(column=0, row=1, sticky=tk.W)
+    out_entry = ttk.Entry(mainframe, textvariable=outdir_var, width=70)
+    out_entry.grid(column=1, row=1, columnspan=3, sticky=(tk.W, tk.E))
+
+    def browse_outdir():
+        p = filedialog.askdirectory(title="Select output folder", initialdir=outdir_var.get())
+        if p:
+            outdir_var.set(p)
+
+    ttk.Button(mainframe, text="Browse...", command=browse_outdir).grid(column=4, row=1)
+
+    # Options
+    opts_frame = ttk.LabelFrame(mainframe, text="Options")
+    opts_frame.grid(column=0, row=2, columnspan=5, pady=8, sticky=(tk.W, tk.E))
+
+    model_var = tk.StringVar(value="base")
+    ttk.Label(opts_frame, text="Model:").grid(column=0, row=0, sticky=tk.W)
+    model_combo = ttk.Combobox(opts_frame, textvariable=model_var, values=("tiny", "base", "small", "medium", "large"), state="readonly", width=10)
+    model_combo.grid(column=1, row=0, sticky=tk.W)
+
+    preprocess_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(opts_frame, text="Preprocess (denoise/normalize)", variable=preprocess_var).grid(column=2, row=0, sticky=tk.W, padx=8)
+
+    vad_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(opts_frame, text="Use VAD segmentation", variable=vad_var).grid(column=0, row=1, sticky=tk.W, pady=4)
+
+    punctuate_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(opts_frame, text="Restore punctuation", variable=punctuate_var).grid(column=1, row=1, sticky=tk.W, pady=4)
+
+    keep_temp_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(opts_frame, text="Keep temporary files", variable=keep_temp_var).grid(column=2, row=1, sticky=tk.W, pady=4)
+
+    bitrate_var = tk.StringVar(value="192k")
+    ttk.Label(opts_frame, text="Bitrate:").grid(column=3, row=0, sticky=tk.W, padx=8)
+    bitrate_entry = ttk.Entry(opts_frame, textvariable=bitrate_var, width=8)
+    bitrate_entry.grid(column=4, row=0, sticky=tk.W)
+
+    device_var = tk.StringVar(value="auto")
+    ttk.Label(opts_frame, text="Device:").grid(column=3, row=1, sticky=tk.W, padx=8)
+    device_combo = ttk.Combobox(opts_frame, textvariable=device_var, values=("auto", "cpu", "cuda", "mps", "dml"), state="readonly", width=8)
+    device_combo.grid(column=4, row=1, sticky=tk.W)
+
+    # Log area
+    log_frame = ttk.LabelFrame(mainframe, text="Log")
+    log_frame.grid(column=0, row=3, columnspan=5, pady=8, sticky=(tk.N, tk.S, tk.E, tk.W))
+    mainframe.rowconfigure(3, weight=1)
+    log_text = tk.Text(log_frame, wrap=tk.WORD, height=15)
+    log_text.grid(column=0, row=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+    log_scroll = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=log_text.yview)
+    log_scroll.grid(column=1, row=0, sticky=(tk.N, tk.S))
+    log_text['yscrollcommand'] = log_scroll.set
+    log_text.configure(state=tk.DISABLED)
+
+    q = queue.Queue()
+
+    def poll_queue():
+        try:
+            while True:
+                msg = q.get_nowait()
+                log_text.configure(state=tk.NORMAL)
+                log_text.insert(tk.END, msg)
+                log_text.see(tk.END)
+                log_text.configure(state=tk.DISABLED)
+        except queue.Empty:
+            pass
+        root.after(200, poll_queue)
+
+    def start_transcription_thread():
+        inp = input_var.get().strip()
+        outd = outdir_var.get().strip() or str(DEFAULT_DOWNLOADS)
+        if not inp or not os.path.isfile(inp):
+            messagebox.showerror("Input required", "Please select a valid input audio/video file.")
+            return
+        if not os.path.isdir(outd):
+            try:
+                os.makedirs(outd, exist_ok=True)
+            except Exception as e:
+                messagebox.showerror("Output folder error", f"Failed to create output folder: {e}")
+                return
+
+        options = {
+            "model": model_var.get(),
+            "preprocess": preprocess_var.get(),
+            "vad": vad_var.get(),
+            "punctuate": punctuate_var.get(),
+            "keep_temp": keep_temp_var.get(),
+            "bitrate": bitrate_var.get(),
+            "device": device_var.get(),
+        }
+
+        # Change working dir to outd so outputs are created there by default for converted files
+        def worker():
+            orig_cwd = os.getcwd()
+            try:
+                os.chdir(outd)
+                # Redirect prints from transcribe to the queue
+                old_out, old_err = sys.stdout, sys.stderr
+                sys.stdout = QueueWriter(q)
+                sys.stderr = QueueWriter(q)
+                try:
+                    run_transcription(inp, outd, options, q)
+                finally:
+                    sys.stdout = old_out
+                    sys.stderr = old_err
+            finally:
+                os.chdir(orig_cwd)
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+
+    run_btn = ttk.Button(mainframe, text="Run", command=start_transcription_thread)
+    run_btn.grid(column=2, row=4, pady=8)
+
+    poll_queue()
+    root.mainloop()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="GUI/CLI wrapper for transcription")
+    parser.add_argument("--input", help="input audio/video file (if provided, runs headless)")
+    parser.add_argument("--outdir", help="output folder (defaults to Downloads)")
+    parser.add_argument("--model", default="base", help="whisper model to use")
+    parser.add_argument("--preprocess", action="store_true")
+    parser.add_argument("--vad", action="store_true")
+    parser.add_argument("--punctuate", action="store_true")
+    parser.add_argument("--keep-temp", action="store_true")
+    parser.add_argument("--bitrate", default="192k")
+    parser.add_argument("--device", default="auto")
+    args = parser.parse_args()
+
+    outdir = args.outdir or str(DEFAULT_DOWNLOADS)
+
+    if args.input:
+        # run headless
+        q = queue.Queue()
+        options = {
+            "model": args.model,
+            "preprocess": args.preprocess,
+            "vad": args.vad,
+            "punctuate": args.punctuate,
+            "keep_temp": args.keep_temp,
+            "bitrate": args.bitrate,
+            "device": args.device,
+        }
+        # run and print queue messages
+        def runner():
+            run_transcription(args.input, outdir, options, q)
+        t = threading.Thread(target=runner)
+        t.start()
+        # print live
+        while t.is_alive() or not q.empty():
+            try:
+                msg = q.get(timeout=0.2)
+                print(msg, end="")
+            except queue.Empty:
+                pass
+        return
+
+    # launch GUI
+    launch_gui(default_outdir=outdir)
+
+
+if __name__ == "__main__":
+    main()
