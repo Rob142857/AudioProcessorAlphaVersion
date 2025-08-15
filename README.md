@@ -30,22 +30,22 @@ After completion: `conda activate speech2textrme`
 
 ## Manual Setup (Detailed Instructions)
 
-### 0. Clone Repository (The line below clones to your downloads folder)
+### 1. Clone Repository (The line below clones to your downloads folder)
 ```powershell
 Set-Location "$env:USERPROFILE\Downloads"; git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme; Set-Location .\speech2textrme
 ```
 
-### 1. Create Virtual Environment
+### 2. Create Virtual Environment
 ```powershell
 python -m venv .venv; .\.venv\Scripts\Activate.ps1; python -m pip install --upgrade pip
 ```
 
-### 2. Install Dependencies
+### 3. Install Dependencies
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-### 3. Install PyTorch (Optional)
+### 4. Install PyTorch (Optional)
 **CPU-only:**
 ```powershell
 python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
@@ -58,7 +58,7 @@ python -m pip install torch --index-url https://download.pytorch.org/whl/cu118
 
 **DirectML:** Install `torch-directml` manually and use `--device dml`
 
-### 4. Preload Models (Recommended)
+### 5. Preload Models (Recommended)
 ```powershell
 python preload_models.py
 ```
@@ -68,12 +68,12 @@ Add `--include-large` for large model (~2.9GB):
 python preload_models.py --include-large
 ```
 
-### 5. Install FFmpeg
+### 6. Install FFmpeg
 ```powershell
 winget install gyan.ffmpeg
 ```
 
-### 6. Environment Check (Optional)
+### 7. Environment Check (Optional)
 ```powershell
 python check_env.py
 ```
