@@ -5,15 +5,24 @@ This repository provides a local speech-to-text pipeline using OpenAI Whisper pl
 This README focuses on a fast, reproducible Windows bootstrap so an AI agent or a human can get the environment created and a single transcription run working with minimal interaction.
 
 ## Quick checklist (what you'll do)
+- Enable PowerShell script execution (one-time setup)
 - Clone the repo
 - Create & activate a Python virtual environment
 - Install Python dependencies (requirements + optional PyTorch build)
 - Ensure FFmpeg is available
 - Run the included `run.bat` (recommended) or launch the GUI / headless CLI
 
-Quickest possible start: PowerShell (interactive)
+## Quickest possible start: PowerShell (interactive)
 
-Open Powershell as Administrator, then:
+**First-time PowerShell setup** (run once as Administrator):
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+This allows locally created scripts to run while requiring downloaded scripts to be signed. You can also use `Bypass` instead of `RemoteSigned` for less restrictive policy.
+
+**Bootstrap command** - Open PowerShell (regular user) and run:
 
 Copy and paste this multi-line PowerShell snippet into a PowerShell window (not cmd). It will clone or update the repo in your Downloads folder, create and activate a `.venv`, install the pinned non-Torch requirements, and then prompt you to run `./run.bat`.
 
@@ -58,6 +67,8 @@ Read-Host -Prompt "Press Enter to close"
 ---
 
 2) Windows ARM64 (Surface) — single-paste bootstrap (automated)
+
+**Prerequisites**: Ensure PowerShell can run scripts (see execution policy command above).
 
 Copy and paste this single command into PowerShell on a Windows ARM64 machine. It clones the repo and runs the automated ARM bootstrap script that handles Miniforge download, installation, conda env creation, dependency installation, and model preloading:
 
