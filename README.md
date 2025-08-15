@@ -2,213 +2,129 @@
 
 This repository provides a local speech-to-text pipeline using OpenAI Whisper plus optional preprocessing (FFmpeg), VAD segmentation, punctuation restoration, and a small Tkinter GUI wrapper.
 
-This README focuses on a fast, reproducible Windows bootstrap so an AI agent or a human can get the environment created and a single transcription run working with minimal interaction.
+## Quick Start
 
-## Quick checklist (what you'll do)
-- Enable PowerShell script execution (one-time setup)
-- Clone the repo
-- Create & activate a Python virtual environment
-- Install Python dependencies (requirements + optional PyTorch build)
-- Ensure FFmpeg is available
-- Run the included `run.bat` (recommended) or launch the GUI / headless CLI
-
-## Quickest possible start: PowerShell (interactive)
-
-**First-time PowerShell setup** (run once as Administrator):
-
+### 1. PowerShell Setup (one-time)
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
-This allows locally created scripts to run while requiring downloaded scripts to be signed. You can also use `Bypass` instead of `RemoteSigned` for less restrictive policy.
-
-**Bootstrap command** - Open PowerShell (regular user) and run:
-
-Copy and paste this multi-line PowerShell snippet into a PowerShell window (not cmd). It will clone or update the repo in your Downloads folder, create and activate a `.venv`, install the pinned non-Torch requirements, and then prompt you to run `./run.bat`.
-
+### 2. Windows x64 - Quick Bootstrap
 ```powershell
-# Quick bootstrap: clone repo, set up venv, install dependencies
-Set-Location "$env:USERPROFILE\Downloads"
-
-if (Test-Path .\speech2textrme) {
-	Write-Host 'Found existing repo, updating...' -ForegroundColor Cyan
-	Set-Location .\speech2textrme
-	if (Get-Command git -ErrorAction SilentlyContinue) { git pull } else { Write-Host 'Git not found, skipping update' -ForegroundColor Yellow }
-} else {
-	Write-Host 'Downloading repository...' -ForegroundColor Cyan
-	if (Get-Command git -ErrorAction SilentlyContinue) {
-		git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme
-	} else {
-		Write-Host 'Git not found, using ZIP download...' -ForegroundColor Yellow
-		$zip = 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip'
-		Invoke-WebRequest $zip -OutFile main.zip
-		Expand-Archive main.zip -DestinationPath . -Force
-		if (Test-Path 'AudioProcessorAlphaVersion-main') { Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme' }
-		Remove-Item main.zip -ErrorAction SilentlyContinue
-	}
-	Set-Location .\speech2textrme
-}
-
-Write-Host 'Setting up Python virtual environment...' -ForegroundColor Cyan
-if (-not (Test-Path .venv)) { python -m venv .venv }
-
-Write-Host 'Activating environment and installing dependencies...' -ForegroundColor Cyan
-. .\.venv\Scripts\Activate.ps1
-
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-
-Write-Host ""
-Write-Host "✓ Bootstrap complete! Next step: run .\run.bat" -ForegroundColor Green
-Write-Host "  This will offer PyTorch options and preload the Whisper medium model." -ForegroundColor Yellow
-Read-Host -Prompt "Press Enter to close"
+Set-Location "$env:USERPROFILE\Downloads"; if (Test-Path .\speech2textrme) { Set-Location .\speech2textrme; if (Get-Command git -ErrorAction SilentlyContinue) { git pull } } else { if (Get-Command git -ErrorAction SilentlyContinue) { git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme } else { Invoke-WebRequest 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip' -OutFile main.zip; Expand-Archive main.zip -Force; Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme'; Remove-Item main.zip }; Set-Location .\speech2textrme }; if (-not (Test-Path .venv)) { python -m venv .venv }; .\.venv\Scripts\Activate.ps1; python -m pip install --upgrade pip; python -m pip install -r requirements.txt
 ```
+
+### 3. Run the Application
+```batch
+.\run.bat
+```
+
+### Windows ARM64 (Surface) - Quick Bootstrap
+```powershell
+Set-Location "$env:USERPROFILE\Downloads"; if (Test-Path .\speech2textrme) { Set-Location .\speech2textrme; if (Get-Command git -ErrorAction SilentlyContinue) { git pull } } else { if (Get-Command git -ErrorAction SilentlyContinue) { git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme } else { Invoke-WebRequest 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip' -OutFile main.zip; Expand-Archive main.zip -Force; Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme'; Remove-Item main.zip }; Set-Location .\speech2textrme }; if (Test-Path .\run_conda.ps1) { powershell -ExecutionPolicy RemoteSigned -File .\run_conda.ps1 } else { Write-Host 'ERROR: Bootstrap script not found!' -ForegroundColor Red }
+```
+
+After completion: `conda activate speech2textrme`
 
 ---
 
-2) Windows ARM64 (Surface) — single-paste bootstrap (automated)
+## Manual Setup (Detailed Instructions)
 
-**Prerequisites**: Ensure PowerShell can run scripts (see execution policy command above).
-
-Copy and paste this single command into PowerShell on a Windows ARM64 machine. It clones the repo and runs the automated ARM bootstrap script that handles Miniforge download, installation, conda env creation, dependency installation, and model preloading:
-
+### 1. Create Virtual Environment
 ```powershell
-Set-Location "$env:USERPROFILE\Downloads"; Write-Host 'ARM64 bootstrap starting...' -ForegroundColor Cyan; if (Test-Path .\speech2textrme) { Write-Host 'Updating existing repo...' -ForegroundColor Yellow; Set-Location .\speech2textrme; if (Get-Command git -ErrorAction SilentlyContinue) { git pull } else { Write-Host 'Git not found, skipping update' } } else { Write-Host 'Downloading repo...' -ForegroundColor Yellow; if (Get-Command git -ErrorAction SilentlyContinue) { git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme } else { Invoke-WebRequest 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip' -OutFile main.zip; Expand-Archive main.zip -DestinationPath . -Force; if (Test-Path 'AudioProcessorAlphaVersion-main') { Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme' }; Remove-Item main.zip -ErrorAction SilentlyContinue }; Set-Location .\speech2textrme }; if (Test-Path .\run_conda.ps1) { Write-Host 'Running automated ARM bootstrap (Miniforge + conda env + model preload)...' -ForegroundColor Green; powershell -ExecutionPolicy RemoteSigned -File .\run_conda.ps1 } else { Write-Host 'ERROR: Bootstrap script not found!' -ForegroundColor Red; Write-Host 'Please download the repo manually.' }
+python -m venv .venv; .\.venv\Scripts\Activate.ps1; python -m pip install --upgrade pip
 ```
 
-This optimized command:
-- Shows colored progress messages for better user feedback  
-- Goes to your Downloads folder
-- Clones or updates the repository (with git or ZIP fallback)
-- Automatically handles cleanup (removes ZIP files)
-- Runs `run_conda.ps1` which downloads Miniforge, installs it, creates conda environment, installs dependencies, and preloads the Whisper medium model
-- Provides clear error messages if something goes wrong
-
-After this completes, activate the environment with: `conda activate speech2textrme`
-
-## Fastest path (one-liner for interactive use)
-Open PowerShell in the repo root and run the included `run.bat`. It will create the venv, install the pinned dependencies (non-PyTorch), and launch the GUI.
-
-If you prefer to do the steps manually or want full control, follow the commands below.
-
-## Manual setup (recommended for debugging and custom PyTorch)
-1) Create and activate a virtual environment (Windows PowerShell):
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-```
-
-2) Install Python packages (requirements.txt contains pinned versions for most packages). This installs Whisper, VAD support, punctuation helpers, and utilities. Note: `torch` is intentionally left unpinned — pick the correct build for your hardware.
-
+### 2. Install Dependencies
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-3) Install PyTorch (optional but recommended if you have GPU/DirectML support). Select the correct wheel for your machine:
-
-- CPU-only (simple):
-
+### 3. Install PyTorch (Optional)
+**CPU-only:**
 ```powershell
 python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-- CUDA (example for CUDA 11.8 GPU):
-
+**CUDA (example for CUDA 11.8):**
 ```powershell
 python -m pip install torch --index-url https://download.pytorch.org/whl/cu118
 ```
 
-- DirectML (Windows without CUDA): install `torch-directml` following Microsoft instructions and use `--device dml` when running. We do not auto-install DirectML because versions must match the local PyTorch build.
+**DirectML:** Install `torch-directml` manually and use `--device dml`
 
-4) **Preload Whisper models** (recommended) to avoid first-run download delays:
-
+### 4. Preload Models (Recommended)
 ```powershell
 python preload_models.py
 ```
 
-This downloads and caches the medium model (~1.4GB). Add `--include-large` to also preload the large model (~2.9GB):
-
+Add `--include-large` for large model (~2.9GB):
 ```powershell
 python preload_models.py --include-large
 ```
 
-5) Ensure FFmpeg is available on PATH. The code can fallback to `imageio-ffmpeg` binaries, but system FFmpeg is preferred. On Windows you can install with winget (if available):
-
+### 5. Install FFmpeg
 ```powershell
 winget install gyan.ffmpeg
 ```
 
-Or download a static build and add its folder to your PATH.
-
-6) Optional environment check (writes `env_report.json` for debugging):
-
+### 6. Environment Check (Optional)
 ```powershell
 python check_env.py
 ```
 
-## Run the GUI (recommended for first run)
-Launch the GUI which will open a simple window for file selection and options:
+## Usage
 
+### GUI Mode
 ```powershell
 python gui_transcribe.py
 ```
 
-## Headless example (automation)
-Transcribe a single file to your Downloads folder using a higher-quality preset:
-
+### Headless Mode
 ```powershell
-.\.venv\Scripts\Activate.ps1
 python gui_transcribe.py --input "C:\path\to\file.mp4" --outdir "$env:USERPROFILE\Downloads" --model medium --preprocess --vad --punctuate --keep-temp
 ```
 
-## Useful helper scripts
-- `run.bat` — Windows bootstrap: creates `.venv`, installs pinned requirements (non-PyTorch), and launches the GUI. Use this first on a fresh Windows VM.
-- `check_env.py` — writes `env_report.json` describing Python version, ffmpeg discoverability, Torch version and CUDA availability, and other quick checks.
+## Windows ARM (Surface) - Detailed Miniforge Setup
 
-## Windows ARM (Surface) — Miniforge (recommended)
-If you're on a Surface Laptop 7 (Windows on ARM) or another Windows/ARM64 machine, many binary wheels (NumPy, numba) are more reliable when installed from conda-forge. The steps below are the recommended flow: download and run the Miniforge installer, create a conda env, install core binary packages, then pip-install the remaining requirements from `requirements.txt`.
-
-Run these in PowerShell (copy-paste). The first block runs the interactive Miniforge installer; the later commands should be executed in a new PowerShell session after installation completes so `conda` is on PATH.
+Run in PowerShell (copy-paste each block):
 
 ```powershell
-# Download Miniforge installer for Windows ARM64
-$mf = "$env:TEMP\Miniforge3-Windows-arm64.exe"
-Invoke-WebRequest "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Windows-arm64.exe" -OutFile $mf
-Start-Process -FilePath $mf -Wait
-
-# After installer finishes, open a new PowerShell session and run:
-conda create -n speech2textrme python=3.11 -y
-conda activate speech2textrme
-
-# Install binary packages from conda-forge to avoid local compilation
-conda install -c conda-forge numpy numba meson ninja -y
-
-# Then install the remaining Python requirements via pip
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-
-Write-Host "Bootstrap complete. You can now run the GUI or run .\run.bat to use the optional PyTorch/DirectML prompt."
+$mf = "$env:TEMP\Miniforge3-Windows-arm64.exe"; Invoke-WebRequest "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Windows-arm64.exe" -OutFile $mf; Start-Process -FilePath $mf -Wait
 ```
 
-## Recommended default flags for quality
-- `--preprocess --vad --punctuate --model medium`
+After installer completes, open new PowerShell:
+```powershell
+conda create -n speech2textrme python=3.11 -y; conda activate speech2textrme; conda install -c conda-forge numpy numba meson ninja -y; python -m pip install --upgrade pip; python -m pip install -r requirements.txt
+```
 
-Notes: the `medium` Whisper model (~1.4GB) and punctuation model weights (~2+GB) will be downloaded on first use.
+## Features & Configuration
 
-## Inputs & outputs
-- Inputs: MP3, WAV, MP4, MOV (video → audio is extracted automatically).
-- Outputs (by default): `.txt` (cleaned & paragraphed), `.docx` (Word, paragraphed), and a per-run JSON log named `<input_basename>_transcription_log.json` which contains timings, options used, and generated file paths.
+**Recommended quality flags:** `--preprocess --vad --punctuate --model medium`
 
-## Troubleshooting checklist
-- If imports fail, confirm the `.venv` is activated and `pip install -r requirements.txt` succeeded.
-- If `ffmpeg` errors occur, make sure `ffmpeg.exe` is on PATH or install via winget / add to PATH.
-- If model downloads fail, retry on a stable network; these files are large.
+**Input formats:** MP3, WAV, MP4, MOV (video → audio extracted automatically)
 
-## Next steps and optional improvements
-- If you want DirectML to be the default on Windows, install `torch` + `torch-directml` manually to avoid version mismatches, then run with `--device dml`.
-- For vendor NPUs (ARM), build ONNX exports and vendor runtimes — this is advanced and not included here.
+**Output formats:** 
+- `.txt` (cleaned & paragraphed)
+- `.docx` (Word format, paragraphed) 
+- `<input_basename>_transcription_log.json` (run metadata, timings, file paths)
 
-## Contact / Contributions
-Open an issue or create a PR with improvements. If you want me to further pin PyTorch builds or add an automated DirectML installer, say which target hardware you want to support and I will add it.
+**Helper scripts:**
+- `run.bat` — Windows bootstrap: creates `.venv`, installs requirements, launches GUI
+- `check_env.py` — writes `env_report.json` with system capability report
+
+## Troubleshooting
+
+- **Import failures:** Confirm `.venv` is activated and `pip install -r requirements.txt` succeeded
+- **FFmpeg errors:** Ensure `ffmpeg.exe` is on PATH or install via `winget install gyan.ffmpeg`
+- **Model download failures:** Retry on stable network (files are large: medium ~1.4GB, punctuation model ~2+GB)
+- **DirectML setup:** Install `torch-directml` manually, then use `--device dml` flag
+
+## Next Steps
+
+- For DirectML default on Windows: install `torch` + `torch-directml` manually, run with `--device dml`
+- For vendor NPUs (ARM): build ONNX exports and vendor runtimes (advanced, not included)
+
+## Contact
+
+Open an issue or create a PR with improvements. For specific PyTorch builds or automated DirectML installer requests, specify target hardware.
