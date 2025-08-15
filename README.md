@@ -48,6 +48,58 @@ Write-Host "Bootstrap complete. Please run .\run.bat now to continue (it will of
 Read-Host -Prompt "Press Enter to close"
 ```
 
+---
+
+2) Windows ARM64 (Surface) — single-paste bootstrap (Miniforge + conda run)
+
+Copy and paste the following into PowerShell on a Windows ARM64 machine (Surface). It downloads and runs the Miniforge ARM64 installer, then uses the installed `conda.exe` directly to create an environment, install binary packages, and pip-install the remaining requirements — all in one pasteable script.
+
+```powershell
+Set-Location "$env:USERPROFILE\Downloads"
+
+# Download Miniforge installer for Windows ARM64
+$mf = "$env:TEMP\Miniforge3-Windows-arm64.exe"
+Invoke-WebRequest "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Windows-arm64.exe" -OutFile $mf
+Start-Process -FilePath $mf -Wait
+
+# Resolve the default conda executable path (adjust if you installed Miniforge somewhere else)
+$condaExe = Join-Path $env:USERPROFILE "Miniforge3\Scripts\conda.exe"
+if (-not (Test-Path $condaExe)) {
+	Write-Host "Miniforge not found at $condaExe — if you installed to a different folder, update the path and rerun."
+	Read-Host -Prompt "Press Enter to exit"
+	exit 1
+}
+
+# Ensure repo is present
+if (Test-Path .\speech2textrme) {
+	Write-Host 'Using existing folder: speech2textrme'
+	Set-Location .\speech2textrme
+	if (Get-Command git -ErrorAction SilentlyContinue) { git pull }
+} else {
+	if (Get-Command git -ErrorAction SilentlyContinue) {
+		git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme
+	} else {
+		$zip = 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip'
+		Invoke-WebRequest $zip -OutFile main.zip
+		Expand-Archive main.zip -DestinationPath .
+		Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme'
+	}
+	Set-Location .\speech2textrme
+}
+
+# Create conda env and install binary deps from conda-forge
+& $condaExe create -n speech2textrme python=3.11 -y
+& $condaExe run -n speech2textrme conda install -c conda-forge numpy numba meson ninja -y
+
+# Use conda run to pip-install the remaining requirements into the conda env
+& $condaExe run -n speech2textrme python -m pip install --upgrade pip
+& $condaExe run -n speech2textrme python -m pip install -r requirements.txt
+
+Write-Host ""
+Write-Host "Conda bootstrap complete. To use interactively: conda activate speech2textrme" 
+Read-Host -Prompt "Press Enter to close"
+```
+
 ## Fastest path (one-liner for interactive use)
 Open PowerShell in the repo root and run the included `run.bat`. It will create the venv, install the pinned dependencies (non-PyTorch), and launch the GUI.
 
@@ -110,6 +162,31 @@ python gui_transcribe.py --input "C:\path\to\file.mp4" --outdir "$env:USERPROFIL
 ## Useful helper scripts
 - `run.bat` — Windows bootstrap: creates `.venv`, installs pinned requirements (non-PyTorch), and launches the GUI. Use this first on a fresh Windows VM.
 - `check_env.py` — writes `env_report.json` describing Python version, ffmpeg discoverability, Torch version and CUDA availability, and other quick checks.
+
+## Windows ARM (Surface) — Miniforge (recommended)
+If you're on a Surface Laptop 7 (Windows on ARM) or another Windows/ARM64 machine, many binary wheels (NumPy, numba) are more reliable when installed from conda-forge. The steps below are the recommended flow: download and run the Miniforge installer, create a conda env, install core binary packages, then pip-install the remaining requirements from `requirements.txt`.
+
+Run these in PowerShell (copy-paste). The first block runs the interactive Miniforge installer; the later commands should be executed in a new PowerShell session after installation completes so `conda` is on PATH.
+
+```powershell
+# Download Miniforge installer for Windows ARM64
+$mf = "$env:TEMP\Miniforge3-Windows-arm64.exe"
+Invoke-WebRequest "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Windows-arm64.exe" -OutFile $mf
+Start-Process -FilePath $mf -Wait
+
+# After installer finishes, open a new PowerShell session and run:
+conda create -n speech2textrme python=3.11 -y
+conda activate speech2textrme
+
+# Install binary packages from conda-forge to avoid local compilation
+conda install -c conda-forge numpy numba meson ninja -y
+
+# Then install the remaining Python requirements via pip
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+
+Write-Host "Bootstrap complete. You can now run the GUI or run .\run.bat to use the optional PyTorch/DirectML prompt."
+```
 
 ## Recommended default flags for quality
 - `--preprocess --vad --punctuate --model medium`
