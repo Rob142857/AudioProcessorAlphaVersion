@@ -1,0 +1,35 @@
+# Python virtual environments
+.venv/
+venv/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Transcripts and documents (generated)
+*.txt
+*.docx
+
+# Audio / Video (generated or large files)
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.aac
+*.ogg
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# FFmpeg binaries and wrappers
+ffmpeg.exe
+ffmpeg.bat
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor directories
+.vscode/
