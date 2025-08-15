@@ -11,6 +11,43 @@ This README focuses on a fast, reproducible Windows bootstrap so an AI agent or 
 - Ensure FFmpeg is available
 - Run the included `run.bat` (recommended) or launch the GUI / headless CLI
 
+Quickest possible start: PowerShell (interactive)
+
+Open Powershell as Administrator, then:
+
+Copy and paste this multi-line PowerShell snippet into a PowerShell window (not cmd). It will clone or update the repo in your Downloads folder, create and activate a `.venv`, install the pinned non-Torch requirements, and then prompt you to run `./run.bat`.
+
+```powershell
+Set-Location "$env:USERPROFILE\Downloads"
+
+if (Test-Path .\speech2textrme) {
+	Write-Host 'Using existing folder: speech2textrme'
+	Set-Location .\speech2textrme
+	if (Get-Command git -ErrorAction SilentlyContinue) { git pull }
+} else {
+	if (Get-Command git -ErrorAction SilentlyContinue) {
+		git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme
+	} else {
+		$zip = 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip'
+		Invoke-WebRequest $zip -OutFile main.zip
+		Expand-Archive main.zip -DestinationPath .
+		Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme'
+	}
+	Set-Location .\speech2textrme
+}
+
+if (-not (Test-Path .venv)) { python -m venv .venv }
+
+. .\.venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+
+Write-Host ""
+Write-Host "Bootstrap complete. Please run .\run.bat now to continue (it will offer optional PyTorch/DirectML install)."
+Read-Host -Prompt "Press Enter to close"
+```
+
 ## Fastest path (one-liner for interactive use)
 Open PowerShell in the repo root and run the included `run.bat`. It will create the venv, install the pinned dependencies (non-PyTorch), and launch the GUI.
 
