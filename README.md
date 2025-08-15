@@ -30,6 +30,11 @@ After completion: `conda activate speech2textrme`
 
 ## Manual Setup (Detailed Instructions)
 
+### 0. Clone Repository (The line below clones to your downloads folder)
+```powershell
+Set-Location "$env:USERPROFILE\Downloads"; git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme; Set-Location .\speech2textrme
+```
+
 ### 1. Create Virtual Environment
 ```powershell
 python -m venv .venv; .\.venv\Scripts\Activate.ps1; python -m pip install --upgrade pip
