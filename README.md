@@ -1,75 +1,80 @@
 # Speech-to-Text Transcription (local, Whisper-based)
 
-This repository provides a local speech-to## Windows ARM64 (Surface) - Detailed Setup
+This repository provides a local speech-to-text pipeline using OpenAI Whisper plus optional preprocessing (FFmpeg), VAD segmentation, punctuation restoration, and a small Tkinter GUI wrapper.
 
-**Current Reality:** PyTorch and most ML libraries don't provide native ARM64 Windows wheels. The best approach is to use x64 emulation.
-
-**Recommended Approach:**
-1. Install x64 Python (not ARM64) from python.org
-2. Follow the regular x64 bootstrap process
-3. Windows 11 ARM64 runs x64 Python efficiently through emulation
-
-**Alternative - Use existing ARM64 Python with CPU-only approach:**
-```powershell
-python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-```
-*Note: This may fail on ARM64. If it fails, install x64 Python instead.*
-
-**Manual ARM64 Dependencies (if available):**
-```powershell
-python -m pip install numpy scipy pillow  # These usually have ARM64 Windows wheels
-python -m pip install -r requirements.txt  # Some packages may fail
-```ne using OpenAI Whisper plus optional preprocessing (FFmpeg), VAD segmentation, punctuation restoration, and a small Tkinter GUI wrapper.
-
-## Quick Start
+## Quick Start (Windows x64)
 
 ### 1. PowerShell Setup (one-time)
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
-### 2. Universal Install (Works on x64 and ARM64)
+### 2. Install Everything
 ```powershell
 Set-Location "$env:USERPROFILE\Downloads"; if (Test-Path .\speech2textrme) { Set-Location .\speech2textrme; if (Get-Command git -ErrorAction SilentlyContinue) { git pull } } else { if (Get-Command git -ErrorAction SilentlyContinue) { git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme } else { Invoke-WebRequest 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip' -OutFile main.zip; Expand-Archive main.zip -Force; Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme'; Remove-Item main.zip }; Set-Location .\speech2textrme }; .\run.bat
 ```
 
-**Then choose option 2** (CPU-only PyTorch) when prompted. This works on both x64 and ARM64 through emulation.
+### 3. Choose PyTorch Option
+When prompted, choose **option 2** (CPU-only PyTorch) for reliable performance.
 
-## NPU Acceleration (Surface Copilot+ PCs)
+---
 
-**🚀 NEW: Use your Surface NPU for faster inference!**
+## ARM64 Surface Installation
 
-For Surface laptops with Qualcomm NPU (Copilot+ PCs), you can enable NPU acceleration:
+**For Surface laptops with ARM64 processors (Copilot+ PCs)**
 
-### Quick NPU Setup
+### Option A: Standard Installation (Recommended)
+**Step 1: PowerShell Setup**
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+**Step 2: Install with x64 Emulation**  
+```powershell
+Set-Location "$env:USERPROFILE\Downloads"; if (Test-Path .\speech2textrme) { Set-Location .\speech2textrme; if (Get-Command git -ErrorAction SilentlyContinue) { git pull } } else { if (Get-Command git -ErrorAction SilentlyContinue) { git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme } else { Invoke-WebRequest 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip' -OutFile main.zip; Expand-Archive main.zip -Force; Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme'; Remove-Item main.zip }; Set-Location .\speech2textrme }; .\run.bat
+```
+
+**Step 3: Choose Option 2**  
+When prompted, choose **option 2** (CPU-only PyTorch) - works through x64 emulation.
+
+### Option B: NPU-Accelerated (Experimental)
+**Step 1: PowerShell Setup** (same as above)
+
+**Step 2: Clone Repository**  
+```powershell
+Set-Location "$env:USERPROFILE\Downloads"; if (Test-Path .\speech2textrme) { Set-Location .\speech2textrme; git pull } else { git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme; Set-Location .\speech2textrme }
+```
+
+**Step 3: Install NPU Dependencies**  
 ```powershell
 python transcribe_npu.py --install-deps
 ```
 
-### NPU Usage
+**Usage:** `python transcribe_npu.py "input_file.mp4" --output "C:\Output"`
+
+### Alternative: Use x64 Python
+If ARM64 installation fails, install x64 Python from python.org instead of ARM64 Python, then follow the x64 instructions above.
+
+---
+
+## NPU Acceleration (Surface Copilot+ PCs)
+
+**🚀 Experimental NPU Support for 2-5x faster transcription**
+
+For Surface Copilot+ PCs with Qualcomm NPU:
 ```powershell
 python transcribe_npu.py "input_file.mp4" --output "C:\Output" --model medium
 ```
 
-Or use the GUI with NPU:
-```powershell
-python gui_transcribe.py --device qnn
-```
+Or use the GUI: `python gui_transcribe.py --device qnn`
 
-**Requirements:**
-- Surface Copilot+ PC with Qualcomm NPU (e.g., Surface Pro 11, Surface Laptop 7)
-- Windows ARM64
-- onnxruntime-qnn package
-
-**Performance:** NPU acceleration can provide 2-5x faster transcription compared to CPU-only inference while using significantly less power.
-
-**Note:** This feature is experimental and requires ONNX-optimized Whisper models. Current implementation falls back to optimized CPU processing with NPU readiness.
+**Requirements:** Surface Pro 11/Surface Laptop 7 or newer with Qualcomm NPU
 
 ---
 
-## Manual Setup (Detailed Instructions)
+## Manual Setup (Advanced Users)
 
-### 1. Clone Repository (The line below clones to your downloads folder)
+### 1. Clone Repository
 ```powershell
 Set-Location "$env:USERPROFILE\Downloads"; git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme; Set-Location .\speech2textrme
 ```
@@ -102,20 +107,12 @@ python -m pip install torch --index-url https://download.pytorch.org/whl/cu118
 python preload_models.py
 ```
 
-Add `--include-large` for large model (~2.9GB):
-```powershell
-python preload_models.py --include-large
-```
-
 ### 6. Install FFmpeg
 ```powershell
 winget install gyan.ffmpeg
 ```
 
-### 7. Environment Check (Optional)
-```powershell
-python check_env.py
-```
+---
 
 ## Usage
 
@@ -127,19 +124,6 @@ python gui_transcribe.py
 ### Headless Mode
 ```powershell
 python gui_transcribe.py --input "C:\path\to\file.mp4" --outdir "$env:USERPROFILE\Downloads" --model medium --preprocess --vad --punctuate --keep-temp
-```
-
-## Windows ARM (Surface) - Detailed Miniforge Setup
-
-Run in PowerShell (copy-paste each block):
-
-```powershell
-$mf = "$env:TEMP\Miniforge3-Windows-arm64.exe"; Invoke-WebRequest "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Windows-arm64.exe" -OutFile $mf; Start-Process -FilePath $mf -Wait
-```
-
-After installer completes, open new PowerShell:
-```powershell
-conda create -n speech2textrme python=3.11 -y; conda activate speech2textrme; conda install -c conda-forge numpy numba meson ninja -y; python -m pip install --upgrade pip; python -m pip install -r requirements.txt; python preload_models.py
 ```
 
 ## Features & Configuration
