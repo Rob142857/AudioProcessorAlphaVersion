@@ -1,7 +1,7 @@
 <!-- Use this file to provide workspace-specific custom instructions to Copilot. For more details, visit https://code.visualstudio.com/docs/copilot/copilot-customization#_use-a-githubcopilotinstructionsmd-file -->
-Quick agent-friendly bootstrap for Windows (fast, predictable):
+Quick agent-friendly bootstrap for Windows x64 (fast, predictable):
 
-1) From the repo root, run the provided Windows bootstrap which creates a venv, installs pinned requirements (non-PyTorch) and launches the GUI:
+1) From the repo root, run the provided Windows bootstrap which creates a venv, installs requirements and launches the GUI:
 
 ```powershell
 .\run.bat
@@ -19,7 +19,7 @@ python -m pip install -r requirements.txt
 3) Install PyTorch matching the target hardware (only if you want a specific build):
 - CPU-only: `python -m pip install torch --index-url https://download.pytorch.org/whl/cpu`
 - CUDA (example): `python -m pip install torch --index-url https://download.pytorch.org/whl/cu118`
-- DirectML: install `torch-directml` manually for your PyTorch build and use `--device dml`.
+- DirectML: install `torch-directml` manually and use `--device dml`
 
 4) **Preload Whisper models** (recommended to avoid first-run delays):
 
