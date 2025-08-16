@@ -20,11 +20,15 @@ Set-Location "$env:USERPROFILE\Downloads"; if (Test-Path .\speech2textrme) { Set
 ```
 
 ### Windows ARM64 (Surface) - Quick Bootstrap
+**Important: ARM64 users should use the conda approach for better compatibility**
+
 ```powershell
-Set-Location "$env:USERPROFILE\Downloads"; if (Test-Path .\speech2textrme) { Set-Location .\speech2textrme; if (Get-Command git -ErrorAction SilentlyContinue) { git pull } } else { if (Get-Command git -ErrorAction SilentlyContinue) { git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme } else { Invoke-WebRequest 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip' -OutFile main.zip; Expand-Archive main.zip -Force; Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme'; Remove-Item main.zip }; Set-Location .\speech2textrme }; if (Test-Path .\run_conda.ps1) { powershell -ExecutionPolicy RemoteSigned -File .\run_conda.ps1 } else { Write-Host 'ERROR: Bootstrap script not found!' -ForegroundColor Red }
+Set-Location "$env:USERPROFILE\Downloads"; if (Test-Path .\speech2textrme) { Set-Location .\speech2textrme; if (Get-Command git -ErrorAction SilentlyContinue) { git pull } } else { if (Get-Command git -ErrorAction SilentlyContinue) { git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git speech2textrme } else { Invoke-WebRequest 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip' -OutFile main.zip; Expand-Archive main.zip -Force; Rename-Item 'AudioProcessorAlphaVersion-main' 'speech2textrme'; Remove-Item main.zip }; Set-Location .\speech2textrme }; powershell -ExecutionPolicy RemoteSigned -File .\run_conda.ps1
 ```
 
 After completion: `conda activate speech2textrme`
+
+**Alternative**: Use `.\run.bat` but it may have PyTorch compatibility issues on ARM64.
 
 ---
 
@@ -100,7 +104,7 @@ $mf = "$env:TEMP\Miniforge3-Windows-arm64.exe"; Invoke-WebRequest "https://githu
 
 After installer completes, open new PowerShell:
 ```powershell
-conda create -n speech2textrme python=3.11 -y; conda activate speech2textrme; conda install -c conda-forge numpy numba meson ninja -y; python -m pip install --upgrade pip; python -m pip install -r requirements.txt
+conda create -n speech2textrme python=3.11 -y; conda activate speech2textrme; conda install -c conda-forge numpy numba meson ninja -y; python -m pip install --upgrade pip; python -m pip install -r requirements.txt; python preload_models.py
 ```
 
 ## Features & Configuration
@@ -124,6 +128,10 @@ conda create -n speech2textrme python=3.11 -y; conda activate speech2textrme; co
 - **FFmpeg errors:** Ensure `ffmpeg.exe` is on PATH or install via `winget install gyan.ffmpeg`
 - **Model download failures:** Retry on stable network (files are large: medium ~1.4GB, punctuation model ~2+GB)
 - **DirectML setup:** Install `torch-directml` manually, then use `--device dml` flag
+- **ARM64/Surface Issues:**
+  - **"Whisper model couldn't be imported":** PyTorch installation failed. Use conda approach instead of run.bat
+  - **Options 2/3 in run.bat don't work:** Standard PyTorch wheels may not work on ARM64. Run `.\run_conda.ps1` instead
+  - **Better ARM64 approach:** Use Miniforge/conda which has pre-built ARM64 binaries for NumPy, PyTorch, etc.
 
 ## Next Steps
 
