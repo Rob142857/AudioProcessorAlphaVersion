@@ -134,7 +134,7 @@ def launch_gui(default_outdir: str = None):
 
     device_var = tk.StringVar(value="auto")
     ttk.Label(opts_frame, text="Device:").grid(column=3, row=1, sticky=tk.W, padx=8)
-    device_combo = ttk.Combobox(opts_frame, textvariable=device_var, values=("auto", "cpu", "cuda", "mps", "dml"), state="readonly", width=8)
+    device_combo = ttk.Combobox(opts_frame, textvariable=device_var, values=("auto", "cpu", "cuda", "mps", "dml", "qnn"), state="readonly", width=8)
     device_combo.grid(column=4, row=1, sticky=tk.W)
 
     # Log area
