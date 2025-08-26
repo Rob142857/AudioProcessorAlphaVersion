@@ -24,21 +24,31 @@ DEFAULT_DOWNLOADS = os.path.normpath(os.path.join(os.path.expanduser("~"), "Down
 def run_transcription(input_file: str, outdir: str, options: dict, output_queue: queue.Queue):
     """Call transcribe.transcribe_file with optimized settings."""
     try:
-        from transcribe import transcribe_file
-    except Exception as e:
-        output_queue.put(f"Failed to import transcribe module: {e}\n")
-        return
-
-    try:
-        output_queue.put(f"Starting optimized transcription for: {input_file}\n")
-        output_queue.put("Using optimized settings: Preprocessing ✓ VAD Segmentation ✓ Punctuation ✓\n")
+        device_mode = options.get("device", "auto")
         
-        # Always use optimized settings for best quality
-        out_txt = transcribe_file(input_file,
-                                  model_name=options.get("model", "medium"),
-                                  keep_temp=options.get("keep_temp", False),
-                                  device_preference=options.get("device", "auto"),
-                                  output_dir=outdir)
+        if device_mode == "hybrid":
+            # Use hybrid GPU+CPU processing
+            from transcribe_hybrid import transcribe_file_hybrid
+            output_queue.put(f"Starting HYBRID GPU+CPU transcription for: {input_file}\n")
+            output_queue.put("Using hybrid processing: GPU + CPU cores working simultaneously\n")
+            
+            out_txt = transcribe_file_hybrid(input_file,
+                                           model_name=options.get("model", "medium"),
+                                           output_dir=outdir,
+                                           max_workers=None)  # Auto-detect optimal worker count
+        else:
+            # Use regular single-device processing
+            from transcribe import transcribe_file
+            output_queue.put(f"Starting optimized transcription for: {input_file}\n")
+            output_queue.put("Using optimized settings: Preprocessing ✓ VAD Segmentation ✓ Punctuation ✓\n")
+            
+            # Always use optimized settings for best quality
+            out_txt = transcribe_file(input_file,
+                                      model_name=options.get("model", "medium"),
+                                      keep_temp=options.get("keep_temp", False),
+                                      device_preference=device_mode,
+                                      output_dir=outdir)
+        
         output_queue.put(f"✓ Transcription complete! Files saved to Downloads folder.\n")
         output_queue.put(f"  → Text file: {os.path.basename(out_txt)}\n")
         output_queue.put(f"  → Word document: {os.path.basename(out_txt.replace('.txt', '.docx'))}\n")
@@ -66,7 +76,7 @@ def launch_gui(default_outdir: str = None):
 
     root = tk.Tk()
     root.title("Speech-to-Text Transcription")
-    root.geometry("900x550")
+    root.geometry("950x700")
     root.resizable(True, True)
 
     # Configure grid weights for proper resizing
@@ -76,7 +86,7 @@ def launch_gui(default_outdir: str = None):
     mainframe = ttk.Frame(root, padding="15 15 15 15")
     mainframe.grid(column=0, row=0, sticky=(tk.N, tk.W, tk.E, tk.S))
     mainframe.columnconfigure(1, weight=1)
-    mainframe.rowconfigure(3, weight=1)
+    mainframe.rowconfigure(5, weight=1)
 
     # Title
     title_label = ttk.Label(mainframe, text="Speech-to-Text Transcription", font=('TkDefaultFont', 16, 'bold'))
@@ -108,7 +118,7 @@ def launch_gui(default_outdir: str = None):
 
     # Settings frame
     settings_frame = ttk.LabelFrame(mainframe, text="Settings", padding="10 10 10 10")
-    settings_frame.grid(column=0, row=3, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 15))
+    settings_frame.grid(column=0, row=3, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 10))
     settings_frame.columnconfigure(1, weight=1)
 
     # Model selection
@@ -118,43 +128,42 @@ def launch_gui(default_outdir: str = None):
                               state="readonly", width=20)
     model_combo.grid(column=1, row=0, sticky=tk.W)
     
-    # Model info
-    model_info = ttk.Label(settings_frame, text="Medium: Good quality, faster (~1.4GB) • Large: Best quality, slower (~2.9GB)", 
-                          font=('TkDefaultFont', 8), foreground='#666666')
-    model_info.grid(column=0, row=1, columnspan=4, sticky=tk.W, pady=(5, 10))
-
-    # Processing selection  
+    # Processing selection (same row)
+    ttk.Label(settings_frame, text="Processing:").grid(column=2, row=0, sticky=tk.W, padx=(20, 10))
     device_var = tk.StringVar(value="auto")
-    ttk.Label(settings_frame, text="Processing:").grid(column=0, row=2, sticky=tk.W, padx=(0, 10))
-    device_combo = ttk.Combobox(settings_frame, textvariable=device_var, values=("auto", "cpu", "cuda"), 
-                               state="readonly", width=20)
-    device_combo.grid(column=1, row=2, sticky=tk.W)
+    device_combo = ttk.Combobox(settings_frame, textvariable=device_var, values=("auto", "hybrid", "cpu", "cuda"), 
+                               state="readonly", width=15)
+    device_combo.grid(column=3, row=0, sticky=tk.W)
+    
+    # Info labels (compact)
+    model_info = ttk.Label(settings_frame, text="Medium: Good quality, faster • Large: Best quality, slower", 
+                          font=('TkDefaultFont', 8), foreground='#666666')
+    model_info.grid(column=0, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
 
-    # Processing info
-    processing_info = ttk.Label(settings_frame, text="Auto: Best available • CPU: Compatible with all systems • CUDA: NVIDIA GPU acceleration", 
+    processing_info = ttk.Label(settings_frame, text="Auto: Best available • Hybrid: GPU+CPU parallel • CPU: All systems • CUDA: NVIDIA GPU", 
                                font=('TkDefaultFont', 8), foreground='#666666')
-    processing_info.grid(column=0, row=3, columnspan=4, sticky=tk.W, pady=(5, 10))
+    processing_info.grid(column=2, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
 
     # Keep temp files option
     keep_temp_var = tk.BooleanVar(value=False)
     temp_check = ttk.Checkbutton(settings_frame, text="Keep temporary files (for debugging)", variable=keep_temp_var)
-    temp_check.grid(column=0, row=4, columnspan=2, sticky=tk.W, pady=(5, 0))
+    temp_check.grid(column=0, row=2, columnspan=4, sticky=tk.W, pady=(5, 0))
 
-    # Quality info
-    quality_frame = ttk.LabelFrame(mainframe, text="Quality Settings (Always Enabled)", padding="10 10 10 10")
-    quality_frame.grid(column=0, row=4, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 15))
+    # Quality info (more compact)
+    quality_frame = ttk.LabelFrame(mainframe, text="Quality Settings (Always Enabled)", padding="10 5 10 5")
+    quality_frame.grid(column=0, row=4, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 10))
     
-    quality_text = "✓ Audio Preprocessing (noise reduction, normalization)\n✓ Voice Activity Detection (smart segmentation)\n✓ Punctuation Restoration (proper sentences)\n✓ Optimized AI Parameters (captures all speech, ignores music filtering)"
+    quality_text = "✓ Audio Preprocessing  ✓ Voice Activity Detection  ✓ Punctuation Restoration  ✓ Optimized AI Parameters"
     quality_label = ttk.Label(quality_frame, text=quality_text, font=('TkDefaultFont', 9), foreground='#006600')
     quality_label.grid(column=0, row=0, sticky=tk.W)
 
     # Log area
     log_frame = ttk.LabelFrame(mainframe, text="Progress Log", padding="5 5 5 5")
-    log_frame.grid(column=0, row=5, columnspan=4, sticky=(tk.N, tk.S, tk.E, tk.W), pady=(0, 15))
+    log_frame.grid(column=0, row=5, columnspan=4, sticky=(tk.N, tk.S, tk.E, tk.W), pady=(0, 10))
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
     
-    log_text = tk.Text(log_frame, wrap=tk.WORD, height=12, font=('Consolas', 9))
+    log_text = tk.Text(log_frame, wrap=tk.WORD, height=10, font=('Consolas', 9))
     log_text.grid(column=0, row=0, sticky=(tk.N, tk.S, tk.E, tk.W))
     
     log_scroll = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=log_text.yview)
@@ -219,7 +228,7 @@ def launch_gui(default_outdir: str = None):
 
     # Run button
     run_btn = ttk.Button(mainframe, text="Start Transcription", command=start_transcription_thread)
-    run_btn.grid(column=1, row=6, columnspan=2, pady=(0, 10))
+    run_btn.grid(column=1, row=6, columnspan=2, pady=(10, 0))
 
     poll_queue()
     root.mainloop()
