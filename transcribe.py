@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="webrtcvad")
+
 import sys
 import os
 import shutil

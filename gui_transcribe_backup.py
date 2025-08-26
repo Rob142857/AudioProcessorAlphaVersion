@@ -186,7 +186,7 @@ def launch_gui(default_outdir: str = None):
 
     # Progress and Status section
     progress_frame = ttk.LabelFrame(mainframe, text="Progress & Status", padding="10 5 10 5")
-    progress_frame.grid(column=0, row=5, columnspan=4, sticky=(tk.E, tk.W), pady=(10, 5))
+    progress_frame.grid(column=0, row=4, columnspan=4, sticky=(tk.E, tk.W), pady=(10, 5))
     progress_frame.columnconfigure(1, weight=1)
     
     # Progress bar
@@ -252,57 +252,13 @@ def launch_gui(default_outdir: str = None):
                                 time_label.configure(text=parts[3])
                     except (ValueError, IndexError):
                         pass  # Ignore malformed progress messages
-                        
-                # Smart progress detection from log messages
-                elif "segments" in msg.lower() and ("/" in msg or "complete" in msg.lower()):
-                    # Try to extract progress from messages like "50/200 segments"
-                    try:
-                        import re
-                        match = re.search(r'(\d+)[/\s]+(\d+)\s+segments?', msg, re.IGNORECASE)
-                        if match:
-                            completed = int(match.group(1))
-                            total = int(match.group(2))
-                            percentage = (completed / total) * 100
-                            
-                            progress_var.set(percentage)
-                            progress_label.configure(text=f"Processing: {completed}/{total} segments ({percentage:.1f}%)")
-                            
-                    except (ValueError, ImportError):
-                        pass
-                        
-                # Detect phase changes for status updates
-                elif any(phase in msg for phase in ["Loading", "Preprocessing", "Extracting", "Transcribing", "Complete"]):
-                    # Update status based on current phase
-                    if "Loading" in msg:
-                        progress_label.configure(text="Loading AI models...")
-                        progress_var.set(5)
-                    elif "Preprocessing" in msg:
-                        progress_label.configure(text="Preprocessing audio...")
-                        progress_var.set(10)
-                    elif "Extracting" in msg:
-                        progress_label.configure(text="Extracting audio segments...")
-                        progress_var.set(20)
-                    elif "Transcribing" in msg or "Starting aggressive" in msg:
-                        progress_label.configure(text="Transcribing audio...")
-                        progress_var.set(30)
-                    elif "Complete" in msg and "successfully" in msg:
-                        progress_var.set(100)
-                        progress_label.configure(text="Transcription completed!")
-                        thread_label.configure(text="System: Ready")
-                        
-                # Detect thread activity from webrtcvad warnings (indicates parallel processing)
-                elif "webrtcvad" in msg and "warning" in msg.lower():
-                    # Count concurrent processes by counting warnings
-                    import threading
-                    active = threading.active_count()
-                    thread_label.configure(text=f"Workers: {active} processes active")
-                
-                # Regular log message
-                formatted_msg = format_log_message(msg)
-                log_text.configure(state=tk.NORMAL)
-                log_text.insert(tk.END, formatted_msg)
-                log_text.see(tk.END)
-                log_text.configure(state=tk.DISABLED)
+                else:
+                    # Regular log message
+                    formatted_msg = format_log_message(msg)
+                    log_text.configure(state=tk.NORMAL)
+                    log_text.insert(tk.END, formatted_msg)
+                    log_text.see(tk.END)
+                    log_text.configure(state=tk.DISABLED)
         except queue.Empty:
             pass
         root.after(200, poll_queue)
@@ -385,7 +341,7 @@ def launch_gui(default_outdir: str = None):
 
     # Run button
     run_btn = ttk.Button(mainframe, text="Start Transcription", command=start_transcription_thread)
-    run_btn.grid(column=1, row=7, columnspan=2, pady=(10, 0))
+    run_btn.grid(column=1, row=6, columnspan=2, pady=(10, 0))
 
     poll_queue()
     root.mainloop()

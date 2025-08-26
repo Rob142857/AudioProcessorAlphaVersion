@@ -4,6 +4,9 @@ Hybrid GPU+CPU transcription for maximum performance.
 This module implements parallel processing using both CUDA GPU and CPU cores
 simultaneously for optimal transcription speed on systems with both capabilities.
 """
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="webrtcvad")
+
 import sys
 import os
 import shutil

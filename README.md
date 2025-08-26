@@ -14,10 +14,18 @@ This program uses cutting-edge AI to convert your recordings into professionally
 
 **⚡ Blazing Fast Performance**
 - **Auto Mode**: Intelligent optimization using 80-90% of available CPU/GPU resources
+- **AGGRESSIVE Strategy**: Maximum hardware utilization with 1 GPU + 26 CPU workers
 - **Optimized Mode**: Enforced GPU + CPU hybrid processing (20-40x realtime)
 - **CUDA Acceleration**: NVIDIA GPU processing (5-15x realtime) 
 - **CPU Processing**: Universal compatibility with intelligent threading
 - Smart preprocessing eliminates noise and normalizes audio automatically
+
+**📊 Real-Time Progress Tracking**
+- **Live Progress Bar**: Visual completion percentage with smooth updates
+- **ETA Calculator**: Intelligent time-to-completion estimates based on actual processing speed
+- **Thread Monitoring**: Real-time display of active worker threads
+- **Performance Metrics**: Speed multiplier calculations and processing statistics
+- **Smart Log Output**: Clean, readable formatting with proper message parsing
 
 **🎯 Professional Output**
 - Clean, formatted Word documents (.docx) with proper headings
@@ -96,24 +104,28 @@ python -m pip install torch-directml
 4. **Choose settings**: 
    - **Model**: Medium (faster) or Large (best quality)
    - **Processing**: Auto (intelligent), Optimized (GPU+CPU), or CPU only
-5. **Click "Start Transcription"** and wait for magic to happen
+5. **Click "Start Transcription"** and watch real-time progress:
+   - **Progress Bar**: Visual completion percentage
+   - **ETA Display**: Intelligent time estimates
+   - **Thread Counter**: Live worker monitoring
+   - **Speed Metrics**: Processing performance statistics
 6. **Find your files** in Downloads folder with perfect formatting
 
 ### Processing Modes Explained
 
-**🤖 Auto (Best possible)** - Intelligent system analysis, automatically uses 80-90% of your CPU/GPU for maximum performance  
-**⚡ Optimized (CPU + GPU enforced)** - Forces hybrid GPU+CPU processing for consistent high-speed transcription  
+**🤖 Auto (Best possible)** - Intelligent system analysis, automatically uses 80-90% of your CPU/GPU for maximum performance with real-time ETA tracking  
+**⚡ Optimized (CPU + GPU enforced)** - Forces hybrid GPU+CPU processing for consistent high-speed transcription with progress monitoring  
 **🖥️ CPU only** - Pure CPU processing with optimizations, works on any computer
 
 ## 📊 Performance Guide
 
 **Real-world processing times for a 30-minute audio file:**
 
-| Processing Mode | Hardware Example | Time | Speed |
-|----------------|------------------|------|--------|
-| CPU only | Any modern computer | ~45 minutes | 0.7x realtime |
-| Auto (GPU detected) | GTX 1070 Ti | ~6 minutes | 5x realtime |
-| Optimized | GTX 1070 Ti + 32 CPU cores | ~2 minutes | 15x realtime |
+| Processing Mode | Hardware Example | Time | Speed | Features |
+|----------------|------------------|------|--------|----------|
+| CPU only | Any modern computer | ~45 minutes | 0.7x realtime | Basic progress |
+| Auto (GPU detected) | GTX 1070 Ti | ~6 minutes | 5x realtime | ETA + threads |
+| AGGRESSIVE | GTX 1070 Ti + 32 CPU cores | ~2 minutes | 15x realtime | Full monitoring |
 
 **Quality Comparison:**
 - **Medium Model**: Excellent quality, faster processing, good for most content
@@ -126,6 +138,14 @@ python -m pip install torch-directml
 - Voice Activity Detection (smart audio segmentation)
 - Punctuation restoration (proper sentences and paragraphs)  
 - Optimized AI parameters (captures all speech, ignores music filtering)
+- Clean startup (suppressed deprecated package warnings)
+
+**📊 Enhanced User Experience:**
+- Real-time progress tracking with visual progress bar
+- Intelligent ETA calculations based on processing speed
+- Live thread monitoring showing active workers
+- Clean, formatted log output for easy monitoring
+- Professional GUI layout with proper spacing
 
 **📝 Professional Output:**
 - Formatted Word documents with metadata
@@ -150,6 +170,7 @@ python -m pip install torch-directml
 - **Out of memory**: Switch to Medium model or CPU processing
 - **GPU not detected**: Install latest graphics drivers and restart
 - **Slow processing**: Enable GPU acceleration with the optional GPU setup commands
+- **Progress tracking issues**: Modern GUI includes real-time ETA and thread monitoring
 
 **Quality Issues:**
 - **Missing speech**: Try Large model for difficult audio
@@ -158,10 +179,12 @@ python -m pip install torch-directml
 
 ## 💡 Pro Tips
 
-- **Long files (>30 min)**: Use Auto mode for intelligent optimization or Optimized for maximum speed
+- **Long files (>30 min)**: Use Auto mode for intelligent optimization with ETA tracking
 - **Poor audio quality**: Choose Large model for better accuracy  
-- **Multiple files**: Process them one at a time for best results
-- **Best quality**: Use Large model + Auto or Optimized processing
+- **Multiple files**: Process them one at a time for best results with full progress monitoring
+- **Best quality**: Use Large model + Auto processing for optimal performance
+- **Monitor progress**: Watch the progress bar, ETA estimates, and active thread count
+- **System utilization**: AGGRESSIVE mode targets 80-90% hardware utilization
 - **Keep originals**: The program never modifies your original files
 
 ## 🗂️ File Locations
@@ -173,10 +196,12 @@ python -m pip install torch-directml
 ## 🆘 Need Help?
 
 **Common Questions:**
-- Files appear in your Downloads folder with "_transcription", "_auto", or "_optimized" suffixes
+- Files appear in your Downloads folder with "_transcription", "_auto", or "_aggressive" suffixes
 - Processing time varies greatly based on audio length and hardware
 - The first run downloads AI models, subsequent runs are much faster
 - All processing happens locally - your audio never leaves your computer
+- Progress bar and ETA estimates provide real-time feedback during transcription
+- Thread monitoring shows system utilization and worker activity
 
 **Still stuck?** Open an issue on the GitHub repository with your error message and system details.
 
