@@ -38,7 +38,7 @@ def adjust_workers_for_model(config, model_name):
     
     actual_ram_per_model = model_ram_usage.get(model_name, 2.5)
     # AGGRESSIVE: Use almost all RAM - reserve only 1GB (was 4GB)
-    usable_ram = max(config["available_ram_gb"] - 1.0, 2.0)
+    usable_ram = max(config["available_ram_gb"] - 0.3, 1.0)  # Ultra-aggressive: Reserve only 300MB
     
     # Recalculate CPU workers based on actual model RAM usage
     max_cpu_workers = int(usable_ram / actual_ram_per_model)
@@ -151,7 +151,7 @@ def get_optimal_worker_counts():
         
         # Calculate AGGRESSIVE CPU workers based on available RAM
         # Reserve only 1GB for system + other processes (was 4GB - now truly aggressive!)
-        usable_ram = max(available_ram_gb - 1.0, 2.0)
+        usable_ram = max(available_ram_gb - 0.3, 1.0)  # Ultra-aggressive: Reserve only 300MB
         
         # Estimate CPU workers based on RAM per model instance
         # We'll determine model size later, so use medium as baseline
@@ -512,7 +512,11 @@ def transcribe_parallel_aggressive(models, segments, config):
         """CPU worker for parallel processing."""
         nonlocal completed_segments
         # Share CPU models across multiple workers
-        model_idx = worker_id % len([k for k in models.keys() if k.startswith('cpu')])
+        cpu_models = [k for k in models.keys() if k.startswith('cpu')]
+        if not cpu_models:  # No CPU models available
+            return []
+        
+        model_idx = worker_id % len(cpu_models)
         model = models.get(f"cpu_{model_idx}")
         if not model:
             return []
@@ -567,9 +571,12 @@ def transcribe_parallel_aggressive(models, segments, config):
             futures.append(future)
         
         # Start CPU workers
+        cpu_models = [k for k in models.keys() if k.startswith('cpu')]
         for i in range(config["cpu_workers"]):
-            future = executor.submit(cpu_worker, i, f"cpu_{i % len([k for k in models.keys() if k.startswith('cpu')])}")
-            futures.append(future)
+            if cpu_models:  # Only if CPU models exist
+                model_key = f"cpu_{i % len(cpu_models)}"
+                future = executor.submit(cpu_worker, i, model_key)
+                futures.append(future)
         
         # Collect all results
         all_results = []
