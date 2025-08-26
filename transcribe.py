@@ -162,12 +162,15 @@ def preprocess_audio(input_path, out_path, bitrate="128k"):
 
 def choose_device(preferred: str = "auto"):
     """Return a torch device string based on preferred choice and availability.
-    preferred: 'auto'|'cpu'|'cuda'|'mps'|'dml'
-    Behavior: prefer DirectML (dml) when available by default to support Windows/ARM NPUs; fallback to CUDA/MPS/CPU.
+    preferred: 'auto'|'cpu'|'cuda'|'dml'
+    Behavior: prefer CUDA when available, fallback to DirectML for Windows GPU acceleration, then CPU.
     """
     preferred = (preferred or "auto").lower()
     if preferred == "auto":
-        # Prefer DirectML on Windows when torch-directml is importable and initializable
+        # Prefer CUDA for x64 Windows systems with NVIDIA GPUs
+        if torch.cuda.is_available():
+            return "cuda"
+        # Fallback to DirectML for Windows GPU acceleration
         if torch_directml is not None:
             try:
                 # attempt to get a DirectML device; this will raise if not supported
@@ -175,11 +178,6 @@ def choose_device(preferred: str = "auto"):
                 return "dml"
             except Exception:
                 pass
-        if torch.cuda.is_available():
-            return "cuda"
-        # macOS MPS
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return "mps"
         return "cpu"
 
     if preferred in ("dml", "directml"):
@@ -195,8 +193,6 @@ def choose_device(preferred: str = "auto"):
 
     if preferred == "cuda" and torch.cuda.is_available():
         return "cuda"
-    if preferred == "mps" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
     return "cpu"
 
 
@@ -263,13 +259,20 @@ def transcribe_file(input_path, model_name="base", preprocess=False, keep_temp=F
         # Select device
         device = choose_device(device_preference)
         print(f"Selected device: {device}")
+        print(f"CUDA available: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            print(f"GPU: {torch.cuda.get_device_name(0)}")
+        
         # Whisper's load_model will place parameters on the detected device; load then ensure placement
-        model = whisper.load_model(model_name)
-        try:
-            model.to(device)
-        except Exception:
-            # Some whisper wrappers accept a device argument; ignore if move fails
-            pass
+        model = whisper.load_model(model_name, device=device)
+        print(f"Model loaded on device: {next(model.parameters()).device}")
+        
+        # Verify model is on correct device
+        if device == "cuda" and torch.cuda.is_available():
+            if next(model.parameters()).device.type != "cuda":
+                print(f"WARNING: Model not on CUDA! Attempting to move...")
+                model = model.to("cuda")
+                print(f"Model moved to: {next(model.parameters()).device}")
 
         outputs = []
         segment_files_used = []
@@ -525,7 +528,7 @@ def main(argv=None):
     parser.add_argument("--preprocess", action="store_true", help="run ffmpeg preprocessing filters")
     parser.add_argument("--keep-temp", action="store_true", help="keep temporary files")
     parser.add_argument("--bitrate", default="192k", help="mp3 bitrate for converted audio")
-    parser.add_argument("--device", default="auto", help="device preference: auto/cpu/cuda/mps/dml")
+    parser.add_argument("--device", default="auto", help="device preference: auto/cpu/cuda/dml")
     parser.add_argument("--vad", action="store_true", help="use voice activity detection to segment audio")
     parser.add_argument("--punctuate", action="store_true", help="run punctuation restoration on transcript")
     parser.add_argument("--output-dir", help="output directory for txt and docx files (default: same as input)")

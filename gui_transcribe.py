@@ -112,7 +112,7 @@ def launch_gui(default_outdir: str = None):
 
     model_var = tk.StringVar(value="medium")
     ttk.Label(opts_frame, text="Model:").grid(column=0, row=0, sticky=tk.W)
-    model_combo = ttk.Combobox(opts_frame, textvariable=model_var, values=("medium", "large"), state="readonly", width=10)
+    model_combo = ttk.Combobox(opts_frame, textvariable=model_var, values=("base", "small", "medium", "large"), state="readonly", width=10)
     model_combo.grid(column=1, row=0, sticky=tk.W)
 
     preprocess_var = tk.BooleanVar(value=False)
@@ -133,9 +133,13 @@ def launch_gui(default_outdir: str = None):
     bitrate_entry.grid(column=4, row=0, sticky=tk.W)
 
     device_var = tk.StringVar(value="auto")
-    ttk.Label(opts_frame, text="Device:").grid(column=3, row=1, sticky=tk.W, padx=8)
-    device_combo = ttk.Combobox(opts_frame, textvariable=device_var, values=("auto", "cpu", "cuda", "mps", "dml"), state="readonly", width=8)
+    ttk.Label(opts_frame, text="Processing:").grid(column=3, row=1, sticky=tk.W, padx=8)
+    device_combo = ttk.Combobox(opts_frame, textvariable=device_var, values=("auto", "cpu", "cuda", "dml"), state="readonly", width=12)
     device_combo.grid(column=4, row=1, sticky=tk.W)
+
+    # Add help text for device options
+    help_text = "auto = Best available • cpu = CPU only • cuda = NVIDIA GPU • dml = DirectML (AMD/Intel/NVIDIA)"
+    ttk.Label(opts_frame, text=help_text, font=('TkDefaultFont', 7), foreground='#666666').grid(column=0, row=2, columnspan=5, sticky=tk.W, pady=(4,0))
 
     # Log area
     log_frame = ttk.LabelFrame(mainframe, text="Log")
