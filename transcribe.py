@@ -163,21 +163,14 @@ def preprocess_audio(input_path, out_path, bitrate="128k"):
 def choose_device(preferred: str = "auto"):
     """Return a torch device string based on preferred choice and availability.
     preferred: 'auto'|'cpu'|'cuda'|'dml'
-    Behavior: prefer CUDA when available, fallback to DirectML for Windows GPU acceleration, then CPU.
+    Behavior: prefer CPU + CUDA combination for best performance and compatibility.
     """
     preferred = (preferred or "auto").lower()
     if preferred == "auto":
-        # Prefer CUDA for x64 Windows systems with NVIDIA GPUs
+        # Prefer CUDA for x64 Windows systems with NVIDIA GPUs, with CPU fallback
         if torch.cuda.is_available():
             return "cuda"
-        # Fallback to DirectML for Windows GPU acceleration
-        if torch_directml is not None:
-            try:
-                # attempt to get a DirectML device; this will raise if not supported
-                _ = torch_directml.device()
-                return "dml"
-            except Exception:
-                pass
+        # CPU fallback - always available
         return "cpu"
 
     if preferred in ("dml", "directml"):
@@ -226,7 +219,21 @@ def get_media_duration(path):
             return None
 
 
-def transcribe_file(input_path, model_name="base", preprocess=False, keep_temp=False, bitrate="192k", device_preference="auto", vad=False, punctuate=False, output_dir=None):
+def transcribe_file(input_path, model_name="medium", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", vad=True, punctuate=True, output_dir=None):
+    """
+    Transcribe a single audio/video file with optimized settings for best quality.
+    
+    Args:
+        input_path: Path to input audio/video file
+        model_name: Whisper model ("medium" or "large")
+        preprocess: Enable preprocessing (always True for quality)
+        keep_temp: Keep temporary files
+        bitrate: Audio bitrate for preprocessing
+        device_preference: Device preference ("auto", "cpu", "cuda", "dml")
+        vad: Enable VAD segmentation (always True for quality)  
+        punctuate: Enable punctuation restoration (always True for quality)
+        output_dir: Output directory (defaults to Downloads)
+    """
     ensure_ffmpeg_in_path()
 
     start_time = time.time()
@@ -290,15 +297,27 @@ def transcribe_file(input_path, model_name="base", preprocess=False, keep_temp=F
                 extract_segment(audio_path, s, e, seg_tmp.name, bitrate=bitrate)
                 seg_files.append(seg_tmp.name)
                 temp_files.append(seg_tmp.name)
-            # transcribe each segment and join
+            # transcribe each segment with optimized settings
             for seg in seg_files:
                 print(f"Transcribing segment {seg}")
-                res = model.transcribe(seg, language=None)
+                # Optimized settings for best transcription quality
+                res = model.transcribe(seg, language=None, 
+                                     compression_ratio_threshold=float('inf'),  # Disable repetitive content detection
+                                     logprob_threshold=-1.0,                    # Disable low-confidence filtering
+                                     no_speech_threshold=0.1,                   # Lower threshold for "no speech"
+                                     condition_on_previous_text=False,          # Disable context dependency
+                                     temperature=0.0)                           # Use deterministic decoding
                 text = res.get("text", "").strip()
                 outputs.append(text)
             segment_files_used = seg_files
         else:
-            res = model.transcribe(audio_path, language=None)
+            # Single file transcription with optimized settings
+            res = model.transcribe(audio_path, language=None,
+                                 compression_ratio_threshold=float('inf'),  # Disable repetitive content detection  
+                                 logprob_threshold=-1.0,                    # Disable low-confidence filtering
+                                 no_speech_threshold=0.1,                   # Lower threshold for "no speech"
+                                 condition_on_previous_text=False,          # Disable context dependency
+                                 temperature=0.0)                           # Use deterministic decoding
             outputs = [res.get("text", "").strip()]
 
         full_text = "\n\n".join(outputs)
@@ -311,15 +330,17 @@ def transcribe_file(input_path, model_name="base", preprocess=False, keep_temp=F
         # clean fillers
         full_text = clean_fillers(full_text)
 
-        # Determine output directory and base filename
+        # Determine output directory and base filename  
         if output_dir:
             # Use the specified output directory
             output_base = os.path.join(output_dir, os.path.splitext(os.path.basename(input_path))[0])
         else:
-            # Use the same directory as the audio file
-            output_base = os.path.splitext(audio_path)[0]
+            # Use Downloads folder as default
+            downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+            output_base = os.path.join(downloads_dir, os.path.splitext(os.path.basename(input_path))[0])
 
-        out_txt_path = output_base + ".txt"
+        # Save transcription as text file
+        out_txt_path = output_base + "_transcription.txt"
         with open(out_txt_path, "w", encoding="utf-8") as f:
             f.write(full_text)
         print(f"Transcription saved to {out_txt_path}")
@@ -522,23 +543,20 @@ def post_process_segments(segments, min_duration=0.5, merge_gap=0.3, max_segment
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Transcribe audio/video to text and docx")
+    parser = argparse.ArgumentParser(description="Transcribe audio/video to text and docx with optimized settings")
     parser.add_argument("input", help="input audio or video file")
-    parser.add_argument("--model", default="base", help="whisper model: tiny, base, small, medium, large")
-    parser.add_argument("--preprocess", action="store_true", help="run ffmpeg preprocessing filters")
+    parser.add_argument("--model", default="medium", help="whisper model: medium, large")
     parser.add_argument("--keep-temp", action="store_true", help="keep temporary files")
     parser.add_argument("--bitrate", default="192k", help="mp3 bitrate for converted audio")
     parser.add_argument("--device", default="auto", help="device preference: auto/cpu/cuda/dml")
-    parser.add_argument("--vad", action="store_true", help="use voice activity detection to segment audio")
-    parser.add_argument("--punctuate", action="store_true", help="run punctuation restoration on transcript")
-    parser.add_argument("--output-dir", help="output directory for txt and docx files (default: same as input)")
+    parser.add_argument("--output-dir", dest="output_dir", help="output directory for txt and docx files (default: Downloads)")
     args = parser.parse_args(argv)
 
     if not os.path.isfile(args.input):
         print(f"File not found: {args.input}")
         sys.exit(1)
 
-    transcribe_file(args.input, model_name=args.model, preprocess=args.preprocess, keep_temp=args.keep_temp, bitrate=args.bitrate, device_preference=args.device, vad=args.vad, punctuate=args.punctuate, output_dir=args.output_dir)
+    transcribe_file(args.input, model_name=args.model, keep_temp=args.keep_temp, bitrate=args.bitrate, device_preference=args.device, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":
