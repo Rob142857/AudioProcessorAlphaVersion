@@ -1,7 +1,8 @@
 """Optimized GUI for Speech-to-Text transcription with best quality settings.
 
 This GUI uses optimized settings for best transcription quality:
-- Preprocessing always enabled
+- Preprocessing al    processing_info = ttk.Label(settings_frame, text="Auto: Intelligent optimization (80-90% utilization) • Optimized: CPU+GPU enforced • CPU: CPU only", 
+                                font=('TkDefaultFont', 9), foreground='#666666')ys enabled
 - VAD segmentation always enabled  
 - Punctuation restoration always enabled
 - Optimized Whisper parameters to capture all speech
@@ -22,32 +23,57 @@ except Exception:
 DEFAULT_DOWNLOADS = os.path.normpath(os.path.join(os.path.expanduser("~"), "Downloads"))
 
 def run_transcription(input_file: str, outdir: str, options: dict, output_queue: queue.Queue):
-    """Call transcribe.transcribe_file with optimized settings."""
+    """Call transcription with optimized settings based on simplified options."""
     try:
         device_mode = options.get("device", "auto")
         
-        if device_mode == "hybrid":
-            # Use hybrid GPU+CPU processing
-            from transcribe_hybrid import transcribe_file_hybrid
-            output_queue.put(f"Starting HYBRID GPU+CPU transcription for: {input_file}\n")
-            output_queue.put("Using hybrid processing: GPU + CPU cores working simultaneously\n")
+        if device_mode == "auto":
+            # Use intelligent auto-optimization for maximum resource utilization
+            from transcribe_auto import transcribe_file_auto
+            output_queue.put(f"Starting AUTO-OPTIMIZED transcription for: {input_file}\n")
+            output_queue.put("🤖 Analyzing system capabilities and optimizing resource utilization...\n")
+            output_queue.put("Target: 80-90% CPU/GPU utilization for maximum performance!\n")
             
-            out_txt = transcribe_file_hybrid(input_file,
-                                           model_name=options.get("model", "medium"),
-                                           output_dir=outdir,
-                                           max_workers=None)  # Auto-detect optimal worker count
-        else:
-            # Use regular single-device processing
+            out_txt = transcribe_file_auto(input_file,
+                                         model_name=options.get("model", "medium"),
+                                         output_dir=outdir,
+                                         target_utilization=85)
+                                         
+        elif device_mode == "optimized":
+            # Use enforced CPU+GPU hybrid processing (aggressive mode)
+            from transcribe_aggressive import transcribe_file_aggressive
+            output_queue.put(f"Starting OPTIMIZED GPU+CPU transcription for: {input_file}\n")
+            output_queue.put("Using enforced hybrid processing: GPU + CPU cores working simultaneously\n")
+            output_queue.put("System monitoring active - watch your Task Manager CPU/GPU usage!\n")
+            
+            out_txt = transcribe_file_aggressive(input_file,
+                                               model_name=options.get("model", "medium"),
+                                               output_dir=outdir,
+                                               force_aggressive=True)
+        
+        elif device_mode == "cpu":
+            # Use CPU-only processing with optimizations
             from transcribe import transcribe_file
-            output_queue.put(f"Starting optimized transcription for: {input_file}\n")
-            output_queue.put("Using optimized settings: Preprocessing ✓ VAD Segmentation ✓ Punctuation ✓\n")
+            output_queue.put(f"Starting CPU-ONLY transcription for: {input_file}\n")
+            output_queue.put("Using CPU-only processing with quality optimizations\n")
             
-            # Always use optimized settings for best quality
             out_txt = transcribe_file(input_file,
                                       model_name=options.get("model", "medium"),
                                       keep_temp=options.get("keep_temp", False),
-                                      device_preference=device_mode,
-                                      output_dir=outdir)
+                                      device_preference="cpu",
+                                      output_dir=outdir,
+                                      preprocess=True,
+                                      vad=True,
+                                      punctuate=True)
+        
+        else:
+            # Fallback to auto mode
+            from transcribe_auto import transcribe_file_auto
+            output_queue.put(f"Falling back to AUTO-OPTIMIZED mode...\n")
+            out_txt = transcribe_file_auto(input_file,
+                                         model_name=options.get("model", "medium"),
+                                         output_dir=outdir,
+                                         target_utilization=85)
         
         output_queue.put(f"✓ Transcription complete! Files saved to Downloads folder.\n")
         output_queue.put(f"  → Text file: {os.path.basename(out_txt)}\n")
@@ -131,7 +157,7 @@ def launch_gui(default_outdir: str = None):
     # Processing selection (same row)
     ttk.Label(settings_frame, text="Processing:").grid(column=2, row=0, sticky=tk.W, padx=(20, 10))
     device_var = tk.StringVar(value="auto")
-    device_combo = ttk.Combobox(settings_frame, textvariable=device_var, values=("auto", "hybrid", "cpu", "cuda"), 
+    device_combo = ttk.Combobox(settings_frame, textvariable=device_var, values=("auto", "optimized", "cpu"), 
                                state="readonly", width=15)
     device_combo.grid(column=3, row=0, sticky=tk.W)
     
@@ -140,7 +166,7 @@ def launch_gui(default_outdir: str = None):
                           font=('TkDefaultFont', 8), foreground='#666666')
     model_info.grid(column=0, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
 
-    processing_info = ttk.Label(settings_frame, text="Auto: Best available • Hybrid: GPU+CPU parallel • CPU: All systems • CUDA: NVIDIA GPU", 
+    processing_info = ttk.Label(settings_frame, text="Auto: Best • Hybrid: GPU+CPU • Aggressive: Maximum cores • CPU: All • CUDA: NVIDIA", 
                                font=('TkDefaultFont', 8), foreground='#666666')
     processing_info.grid(column=2, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
 
@@ -240,7 +266,9 @@ def main():
     parser.add_argument("--outdir", help="output folder (defaults to Downloads)")
     parser.add_argument("--model", default="medium", help="whisper model: medium or large")
     parser.add_argument("--keep-temp", action="store_true")
-    parser.add_argument("--device", default="auto")
+    parser.add_argument("--device", default="auto", 
+                       choices=["auto", "optimized", "cpu"],
+                       help="Processing mode: auto (intelligent), optimized (GPU+CPU forced), cpu (CPU only)")
     args = parser.parse_args()
 
     outdir = args.outdir or DEFAULT_DOWNLOADS

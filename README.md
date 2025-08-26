@@ -13,9 +13,10 @@ This program uses cutting-edge AI to convert your recordings into professionally
 - Smart punctuation restoration creates proper sentences and paragraphs
 
 **⚡ Blazing Fast Performance**
-- **Hybrid Mode**: GPU + CPU working simultaneously for maximum speed (20-40x realtime)
+- **Auto Mode**: Intelligent optimization using 80-90% of available CPU/GPU resources
+- **Optimized Mode**: Enforced GPU + CPU hybrid processing (20-40x realtime)
 - **CUDA Acceleration**: NVIDIA GPU processing (5-15x realtime) 
-- **CPU Processing**: Universal compatibility (works on any computer)
+- **CPU Processing**: Universal compatibility with intelligent threading
 - Smart preprocessing eliminates noise and normalizes audio automatically
 
 **🎯 Professional Output**
@@ -94,16 +95,15 @@ python -m pip install torch-directml
 3. **Select your file**: Click "Browse" and choose any audio/video file
 4. **Choose settings**: 
    - **Model**: Medium (faster) or Large (best quality)
-   - **Processing**: Auto/Hybrid/CUDA/CPU
+   - **Processing**: Auto (intelligent), Optimized (GPU+CPU), or CPU only
 5. **Click "Start Transcription"** and wait for magic to happen
 6. **Find your files** in Downloads folder with perfect formatting
 
 ### Processing Modes Explained
 
-**🔄 Auto Mode** - Automatically selects the fastest available processing  
-**🚀 Hybrid Mode** - Uses GPU + CPU simultaneously for maximum speed (recommended for long files)  
-**⚡ CUDA Mode** - NVIDIA GPU processing for consistent high speed  
-**🖥️ CPU Mode** - Universal compatibility, slower but works everywhere
+**🤖 Auto (Best possible)** - Intelligent system analysis, automatically uses 80-90% of your CPU/GPU for maximum performance  
+**⚡ Optimized (CPU + GPU enforced)** - Forces hybrid GPU+CPU processing for consistent high-speed transcription  
+**🖥️ CPU only** - Pure CPU processing with optimizations, works on any computer
 
 ## 📊 Performance Guide
 
@@ -111,9 +111,9 @@ python -m pip install torch-directml
 
 | Processing Mode | Hardware Example | Time | Speed |
 |----------------|------------------|------|--------|
-| CPU Only | Any modern computer | ~45 minutes | 0.7x realtime |
-| CUDA | GTX 1070 Ti | ~6 minutes | 5x realtime |
-| Hybrid | GTX 1070 Ti + 32 CPU cores | ~2 minutes | 15x realtime |
+| CPU only | Any modern computer | ~45 minutes | 0.7x realtime |
+| Auto (GPU detected) | GTX 1070 Ti | ~6 minutes | 5x realtime |
+| Optimized | GTX 1070 Ti + 32 CPU cores | ~2 minutes | 15x realtime |
 
 **Quality Comparison:**
 - **Medium Model**: Excellent quality, faster processing, good for most content
@@ -158,10 +158,10 @@ python -m pip install torch-directml
 
 ## 💡 Pro Tips
 
-- **Long files (>30 min)**: Use Hybrid mode for maximum speed
+- **Long files (>30 min)**: Use Auto mode for intelligent optimization or Optimized for maximum speed
 - **Poor audio quality**: Choose Large model for better accuracy  
 - **Multiple files**: Process them one at a time for best results
-- **Best quality**: Use Large model + CUDA/Hybrid processing
+- **Best quality**: Use Large model + Auto or Optimized processing
 - **Keep originals**: The program never modifies your original files
 
 ## 🗂️ File Locations
@@ -173,7 +173,7 @@ python -m pip install torch-directml
 ## 🆘 Need Help?
 
 **Common Questions:**
-- Files appear in your Downloads folder with "_transcription" or "_hybrid" suffixes
+- Files appear in your Downloads folder with "_transcription", "_auto", or "_optimized" suffixes
 - Processing time varies greatly based on audio length and hardware
 - The first run downloads AI models, subsequent runs are much faster
 - All processing happens locally - your audio never leaves your computer

@@ -1,16 +1,36 @@
-# Core dependencies (install into the project virtual environment)
+# Core AI/ML dependencies
 openai-whisper==20250625
-python-docx==1.2.0
-moviepy==2.2.1
-imageio-ffmpeg==0.6.0
-webrtcvad==2.0.10
 deepmultilingualpunctuation==1.0.1
-tqdm>=4.60.0
 
-# PyTorch: install separately for GPU/CUDA compatibility. Example (CPU-only):
-# pip install torch --index-url https://download.pytorch.org/whl/cpu
-# Or for CUDA, pick the correct wheel from https://pytorch.org/get-started/locally/
-# We intentionally avoid pinning torch here to let users choose the right build.
+# Audio/Video processing
+moviepy>=2.1.0,<3.0.0
+imageio-ffmpeg>=0.6.0,<0.7.0
+webrtcvad==2.0.10
 
-# Optional (improve DirectML support on Windows):
-# pip install torch-directml
+# Document generation
+python-docx>=1.2.0,<2.0.0
+
+# System monitoring and performance optimization
+psutil>=7.0.0,<8.0.0
+tqdm>=4.60.0,<5.0.0
+
+# GUI dependencies (tkinter is built-in with Python)
+# No additional GUI packages needed - using standard tkinter
+
+# PyTorch: Install separately for optimal GPU/CUDA compatibility
+# Choose the appropriate build for your system:
+#
+# CPU-only (smaller, universal):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#
+# CUDA 11.8 (for most NVIDIA GPUs like GTX 1070 Ti):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu118
+#
+# CUDA 12.1+ (for newer NVIDIA GPUs):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+#
+# DirectML (Windows AMD/Intel GPUs):
+#   pip install torch-directml
+#
+# We intentionally avoid pinning torch here to let users choose the optimal build
+# for their hardware configuration.
