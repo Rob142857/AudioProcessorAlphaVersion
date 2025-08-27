@@ -457,14 +457,14 @@ def transcribe_parallel_aggressive(models, segments, config):
     def send_progress_update():
         """Send progress update to GUI if running in GUI mode."""
         nonlocal completed_segments
-        if completed_segments > 0:
+        if completed_segments > 0 and len(segments) > 0:
             percentage = (completed_segments / len(segments)) * 100
             elapsed = time.time() - start_time
             active_threads = threading.active_count() - 1  # Subtract main thread
-            
+
             status = f"Transcribing: {completed_segments}/{len(segments)} segments"
             elapsed_str = f"Elapsed: {elapsed:.0f}s"
-            
+
             # Try to send to GUI queue if available
             try:
                 # This will only work if called from GUI context
@@ -473,7 +473,7 @@ def transcribe_parallel_aggressive(models, segments, config):
                     print(f"PROGRESS:{percentage:.1f}|{status}|{active_threads}|{elapsed_str}")
             except:
                 pass  # Not in GUI context, just continue
-            
+
             # Also print to console
             print(f"📊 Progress: {percentage:.1f}% ({completed_segments}/{len(segments)}) - {active_threads} threads active")
     
@@ -516,12 +516,22 @@ def transcribe_parallel_aggressive(models, segments, config):
     def cpu_worker(worker_id, model_key):
         """CPU worker for parallel processing."""
         nonlocal completed_segments
+        
+        # Get available CPU models
+        cpu_models = [k for k in models.keys() if k.startswith('cpu')]
+        if not cpu_models:
+            print(f"⚠️  CPU Worker {worker_id}: No CPU models available, skipping")
+            return []
+            
         # Share CPU models across multiple workers
-        model_idx = worker_id % len([k for k in models.keys() if k.startswith('cpu')])
-        model = models.get(f"cpu_{model_idx}")
+        model_idx = worker_id % len(cpu_models)
+        model_key = cpu_models[model_idx]
+        model = models.get(model_key)
         if not model:
+            print(f"⚠️  CPU Worker {worker_id}: Model {model_key} not found, skipping")
             return []
         
+        print(f"🖥️  CPU Worker {worker_id}: Using model {model_key}")
         worker_results = []
         processed_count = 0
         
@@ -545,21 +555,6 @@ def transcribe_parallel_aggressive(models, segments, config):
                 print(f"\n❌ CPU Worker {worker_id} error: {e}")
         
         return worker_results
-        
-        while not segment_queue.empty():
-            try:
-                seg_id, segment_info = segment_queue.get_nowait()
-                
-                result = transcribe_segment_aggressive(model, None, segment_info, f"CPU-{worker_id}")
-                result["segment_id"] = seg_id
-                worker_results.append(result)
-                
-            except queue.Empty:
-                break
-            except Exception as e:
-                print(f"\n❌ CPU Worker {worker_id} error: {e}")
-        
-        return worker_results
     
     # Start all workers
     futures = []
@@ -572,9 +567,15 @@ def transcribe_parallel_aggressive(models, segments, config):
             futures.append(future)
         
         # Start CPU workers
-        for i in range(config["cpu_workers"]):
-            future = executor.submit(cpu_worker, i, f"cpu_{i % len([k for k in models.keys() if k.startswith('cpu')])}")
-            futures.append(future)
+        cpu_models = [k for k in models.keys() if k.startswith('cpu')]
+        if cpu_models:
+            for i in range(config["cpu_workers"]):
+                model_idx = i % len(cpu_models)
+                model_key = cpu_models[model_idx]
+                future = executor.submit(cpu_worker, i, model_key)
+                futures.append(future)
+        else:
+            print("⚠️  No CPU models available, skipping CPU workers")
         
         # Collect all results
         all_results = []

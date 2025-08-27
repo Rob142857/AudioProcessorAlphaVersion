@@ -39,6 +39,12 @@ This program uses cutting-edge AI to convert your recordings into professionally
 - **Content Filtering Bypass**: Transcribes audio with music or copyright content perfectly
 - **Multi-format Support**: Handles virtually any audio/video format
 
+**🛠️ Troubleshooting Tools**
+- **Built-in Troubleshooting Mode**: Test different transcription approaches automatically
+- **VAD vs No-VAD Comparison**: Compare segmented vs continuous transcription
+- **Model Size Testing**: Test Medium vs Large models for quality differences
+- **Detailed Logging**: Comprehensive logs show processing steps and segment information
+
 ## 📁 Supported Files
 
 **Audio Formats:** MP3, WAV, FLAC, M4A, AAC, OGG, WMA  
@@ -183,6 +189,50 @@ curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/m
 - **Missing speech**: Try Large model for difficult audio
 - **Wrong language**: The AI auto-detects language, but works best with English content
 - **Poor punctuation**: This is automatically optimized - output should have proper formatting
+- **Transcripts too short**: Use Troubleshooting mode to identify the issue
+
+## 🛠️ Troubleshooting Short Transcripts
+
+If your transcripts are too short or missing content, use the built-in troubleshooting tools:
+
+### Quick Troubleshooting (GUI)
+1. **Launch the GUI**: Double-click `launch_gui.bat`
+2. **Select your file**: Click "Browse" and choose your audio/video file
+3. **Choose "Troubleshoot" mode**: In the Processing dropdown, select "Troubleshoot"
+4. **Click "Start Transcription"**: This will run 4 different tests automatically
+5. **Compare results**: Check your Downloads folder for files ending in:
+   - `_transcription.txt` (VAD + Medium model)
+   - `_no_vad_transcription.txt` (No VAD + Medium model) 
+   - Large model versions with similar suffixes
+
+### Command-Line Troubleshooting
+```cmd
+# Run troubleshooting on your audio file
+troubleshoot.bat "path\to\your\audio_file.mp3"
+```
+
+### Common Issues & Solutions
+
+**VAD Too Aggressive (Most Common)**
+- **Symptom**: No-VAD versions are much longer than VAD versions
+- **Solution**: Use "No VAD" transcription or adjust VAD settings
+
+**Model Size Issue**
+- **Symptom**: Large model versions are significantly longer
+- **Solution**: Always use Large model for best quality
+
+**Audio Quality Issues**
+- **Symptom**: All methods produce short transcripts
+- **Solution**: Check audio quality, try different preprocessing
+
+### Manual Testing
+```bash
+# Test without VAD segmentation
+python transcribe.py "your_file.mp3" --model large
+
+# Test with VAD disabled
+python -c "from transcribe import transcribe_file_no_vad; transcribe_file_no_vad('your_file.mp3', model_name='large')"
+```
 
 ## 💡 Pro Tips
 

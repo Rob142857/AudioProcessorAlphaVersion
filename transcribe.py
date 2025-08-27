@@ -282,6 +282,30 @@ def transcribe_file(input_path, model_name="medium", preprocess=True, keep_temp=
         model = whisper.load_model(model_name, device=device)
         print(f"Model loaded on device: {next(model.parameters()).device}")
         
+        # Verify the correct model was loaded by checking model size
+        model_size = sum(p.numel() for p in model.parameters())
+        print(f"Model size: {model_size:,} parameters")
+        
+        # Estimate model type based on size (approximate)
+        if model_size > 700000000:  # Large model has ~1.5B parameters
+            loaded_model_type = "large"
+        elif model_size > 350000000:  # Medium model has ~770M parameters
+            loaded_model_type = "medium"
+        elif model_size > 70000000:  # Small model has ~244M parameters
+            loaded_model_type = "small"
+        elif model_size > 35000000:  # Base model has ~74M parameters
+            loaded_model_type = "base"
+        else:
+            loaded_model_type = "tiny"
+        
+        print(f"Detected loaded model type: {loaded_model_type}")
+        
+        if loaded_model_type != model_name:
+            print(f"⚠️  WARNING: Requested model '{model_name}' but loaded '{loaded_model_type}' (cached model used)")
+            print("   To force loading the correct model, delete the Whisper cache and try again")
+        else:
+            print(f"✓ Correct model '{model_name}' loaded successfully")
+        
         # Verify model is on correct device
         if device == "cuda" and torch.cuda.is_available():
             if next(model.parameters()).device.type != "cuda":
@@ -293,9 +317,9 @@ def transcribe_file(input_path, model_name="medium", preprocess=True, keep_temp=
         segment_files_used = []
         if vad:
             print("Running VAD segmentation...")
-            segments = vad_segment_times(audio_path, aggressiveness=2, frame_duration_ms=30, padding_ms=200)
+            segments = vad_segment_times(audio_path, aggressiveness=1, frame_duration_ms=30, padding_ms=300)
             print(f"Raw segments found: {len(segments)}")
-            segments = post_process_segments(segments, min_duration=0.6, merge_gap=0.35, max_segments=120)
+            segments = post_process_segments(segments, min_duration=0.3, merge_gap=0.5, max_segments=200)
             print(f"Segments after post-processing: {len(segments)}")
             seg_files = []
             for idx, (s, e) in enumerate(segments):
@@ -547,6 +571,180 @@ def clean_fillers(text):
     return cleaned
 
 
+def transcribe_file_no_vad(input_path, model_name="medium", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", punctuate=True, output_dir=None):
+    """
+    Transcribe a single audio/video file WITHOUT VAD segmentation - transcribes entire file as one piece.
+    This is useful for troubleshooting when VAD is cutting out too much content.
+    
+    Args:
+        input_path: Path to input audio/video file
+        model_name: Whisper model ("medium" or "large")
+        preprocess: Enable preprocessing (always True for quality)
+        keep_temp: Keep temporary files
+        bitrate: Audio bitrate for preprocessing
+        device_preference: Device preference ("auto", "cpu", "cuda", "dml")
+        punctuate: Enable punctuation restoration (always True for quality)
+        output_dir: Output directory (defaults to Downloads)
+    """
+    ensure_ffmpeg_in_path()
+
+    start_time = time.time()
+
+    temp_files = []
+    log_outputs = []
+    try:
+        ext = os.path.splitext(input_path)[1].lower()
+        # If user requested preprocessing, always create a temp file with processed audio
+        if preprocess:
+            tf = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+            tf.close()
+            pre_path = tf.name
+            print(f"Preprocessing audio -> {pre_path}...")
+            preprocess_audio(input_path, pre_path, bitrate=bitrate)
+            audio_path = pre_path
+            temp_files.append(pre_path)
+        else:
+            # Convert non-mp3 inputs to mp3
+            if ext != ".mp3":
+                print(f"Converting {input_path} to MP3 (compressed)...")
+                audio_path = convert_to_mp3(input_path, bitrate=bitrate)
+                temp_files.append(audio_path)
+            else:
+                audio_path = input_path
+
+        media_length = get_media_duration(input_path)
+
+        print(f"Loading Whisper model '{model_name}' (this may take a while)...")
+        # Select device
+        device = choose_device(device_preference)
+        print(f"Selected device: {device}")
+        print(f"CUDA available: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            print(f"GPU: {torch.cuda.get_device_name(0)}")
+        
+        # Whisper's load_model will place parameters on the detected device; load then ensure placement
+        model = whisper.load_model(model_name, device=device)
+        print(f"Model loaded on device: {next(model.parameters()).device}")
+        
+        # Verify the correct model was loaded by checking model size
+        model_size = sum(p.numel() for p in model.parameters())
+        print(f"Model size: {model_size:,} parameters")
+        
+        # Estimate model type based on size (approximate)
+        if model_size > 700000000:  # Large model has ~1.5B parameters
+            loaded_model_type = "large"
+        elif model_size > 350000000:  # Medium model has ~770M parameters
+            loaded_model_type = "medium"
+        elif model_size > 70000000:  # Small model has ~244M parameters
+            loaded_model_type = "small"
+        elif model_size > 35000000:  # Base model has ~74M parameters
+            loaded_model_type = "base"
+        else:
+            loaded_model_type = "tiny"
+        
+        print(f"Detected loaded model type: {loaded_model_type}")
+        
+        if loaded_model_type != model_name:
+            print(f"⚠️  WARNING: Requested model '{model_name}' but loaded '{loaded_model_type}' (cached model used)")
+            print("   To force loading the correct model, delete the Whisper cache and try again")
+        else:
+            print(f"✓ Correct model '{model_name}' loaded successfully")
+        
+        # Verify model is on correct device
+        if device == "cuda" and torch.cuda.is_available():
+            if next(model.parameters()).device.type != "cuda":
+                print(f"WARNING: Model not on CUDA! Attempting to move...")
+                model = model.to("cuda")
+                print(f"Model moved to: {next(model.parameters()).device}")
+
+        print("Transcribing entire file (no VAD segmentation)...")
+        # Single file transcription with optimized settings
+        res = model.transcribe(audio_path, language=None,
+                             compression_ratio_threshold=float('inf'),  # Disable repetitive content detection  
+                             logprob_threshold=-1.0,                    # Disable low-confidence filtering
+                             no_speech_threshold=0.1,                   # Lower threshold for "no speech"
+                             condition_on_previous_text=False,          # Disable context dependency
+                             temperature=0.0)                           # Use deterministic decoding
+        full_text = res.get("text", "").strip()
+
+        if punctuate:
+            print("Running punctuation model to restore punctuation...")
+            pm = PunctuationModel()
+            full_text = pm.restore_punctuation(full_text)
+
+        # clean fillers
+        full_text = clean_fillers(full_text)
+
+        # Determine output directory and base filename  
+        if output_dir:
+            # Use the specified output directory
+            output_base = os.path.join(output_dir, os.path.splitext(os.path.basename(input_path))[0])
+        else:
+            # Use Downloads folder as default
+            downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+            output_base = os.path.join(downloads_dir, os.path.splitext(os.path.basename(input_path))[0])
+
+        # Save transcription as text file
+        out_txt_path = output_base + "_no_vad_transcription.txt"
+        with open(out_txt_path, "w", encoding="utf-8") as f:
+            f.write(full_text)
+        print(f"Transcription saved to {out_txt_path}")
+        log_outputs.append(os.path.abspath(out_txt_path))
+
+        doc = Document()
+        doc.add_heading("Transcription (No VAD)", 0)
+        for para in split_into_paragraphs(full_text):
+            doc.add_paragraph(para)
+        out_docx = output_base + "_no_vad.docx"
+        doc.save(out_docx)
+        print(f"Word document saved to {out_docx}")
+        log_outputs.append(os.path.abspath(out_docx))
+
+        end_time = time.time()
+        elapsed = end_time - start_time
+
+        # write log file next to the output txt
+        orig_base = os.path.splitext(os.path.basename(input_path))[0]
+        log_name = f"{orig_base}_no_vad_transcription_log.txt"
+        log_dir = os.path.dirname(os.path.abspath(out_txt_path))
+        log_path = os.path.join(log_dir, log_name)
+        
+        # Convert paths to forward slashes for readability
+        input_path_clean = os.path.abspath(input_path).replace('\\', '/')
+        output_paths_clean = [os.path.abspath(p).replace('\\', '/') for p in log_outputs]
+        
+        try:
+            with open(log_path, "w", encoding="utf-8") as lf:
+                lf.write("TRANSCRIPTION LOG (No VAD)\n")
+                lf.write("=" * 50 + "\n\n")
+                lf.write(f"Input File: {input_path_clean}\n")
+                lf.write(f"Model: {model_name}\n")
+                lf.write(f"Device: {device}\n")
+                lf.write(f"Preprocess: {bool(preprocess)}\n")
+                lf.write(f"VAD Segmentation: DISABLED\n")
+                lf.write(f"Punctuation Restore: {bool(punctuate)}\n")
+                lf.write(f"Processing Time: {format_duration(elapsed)}\n")
+                if media_length is not None:
+                    lf.write(f"Original Length: {format_duration(media_length)}\n")
+                lf.write(f"Temp Files Removed: {not keep_temp}\n\n")
+                lf.write("Output Files:\n")
+                for output_path in output_paths_clean:
+                    lf.write(f"  - {output_path}\n")
+            print(f"Log written to {log_path}")
+        except Exception as e:
+            print(f"Failed to write log file: {e}")
+
+    finally:
+        if not keep_temp:
+            for p in temp_files:
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
+    return out_txt_path
+
+
 def post_process_segments(segments, min_duration=0.5, merge_gap=0.3, max_segments=200):
     """Merge nearby segments, drop very short ones, and cap total segments.
     segments: list of (start,end) tuples sorted by start
@@ -576,21 +774,225 @@ def post_process_segments(segments, min_duration=0.5, merge_gap=0.3, max_segment
     return filtered
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description="Transcribe audio/video to text and docx with optimized settings")
-    parser.add_argument("input", help="input audio or video file")
-    parser.add_argument("--model", default="medium", help="whisper model: medium, large")
-    parser.add_argument("--keep-temp", action="store_true", help="keep temporary files")
-    parser.add_argument("--bitrate", default="192k", help="mp3 bitrate for converted audio")
-    parser.add_argument("--device", default="auto", help="device preference: auto/cpu/cuda/dml")
-    parser.add_argument("--output-dir", dest="output_dir", help="output directory for txt and docx files (default: Downloads)")
-    args = parser.parse_args(argv)
+def transcribe_lecture(input_path, model_name="medium", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", punctuate=True, output_dir=None):
+    """
+    Specialized transcription for lectures with less aggressive VAD settings.
+    Lectures often have pauses, background noise, and varying audio quality that standard VAD misses.
+    """
+    ensure_ffmpeg_in_path()
 
-    if not os.path.isfile(args.input):
-        print(f"File not found: {args.input}")
-        sys.exit(1)
+    start_time = time.time()
 
-    transcribe_file(args.input, model_name=args.model, keep_temp=args.keep_temp, bitrate=args.bitrate, device_preference=args.device, output_dir=args.output_dir)
+    temp_files = []
+    log_outputs = []
+    try:
+        ext = os.path.splitext(input_path)[1].lower()
+        # If user requested preprocessing, always create a temp file with processed audio
+        if preprocess:
+            tf = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+            tf.close()
+            pre_path = tf.name
+            print(f"Preprocessing audio -> {pre_path}...")
+            preprocess_audio(input_path, pre_path, bitrate=bitrate)
+            audio_path = pre_path
+            temp_files.append(pre_path)
+        else:
+            # Convert non-mp3 inputs to mp3
+            if ext != ".mp3":
+                print(f"Converting {input_path} to MP3 (compressed)...")
+                audio_path = convert_to_mp3(input_path, bitrate=bitrate)
+                temp_files.append(audio_path)
+            else:
+                audio_path = input_path
+
+        media_length = get_media_duration(input_path)
+
+        print(f"Loading Whisper model '{model_name}' (this may take a while)...")
+        # Select device
+        device = choose_device(device_preference)
+        print(f"Selected device: {device}")
+        print(f"CUDA available: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            print(f"GPU: {torch.cuda.get_device_name(0)}")
+
+        # Whisper's load_model will place parameters on the detected device; load then ensure placement
+        model = whisper.load_model(model_name, device=device)
+        print(f"Model loaded on device: {next(model.parameters()).device}")
+
+        # Verify the correct model was loaded by checking model size
+        model_size = sum(p.numel() for p in model.parameters())
+        print(f"Model size: {model_size:,} parameters")
+
+        # Estimate model type based on size (approximate)
+        if model_size > 700000000:  # Large model has ~1.5B parameters
+            loaded_model_type = "large"
+        elif model_size > 350000000:  # Medium model has ~770M parameters
+            loaded_model_type = "medium"
+        elif model_size > 70000000:  # Small model has ~244M parameters
+            loaded_model_type = "small"
+        elif model_size > 35000000:  # Base model has ~74M parameters
+            loaded_model_type = "base"
+        else:
+            loaded_model_type = "tiny"
+
+        print(f"Detected loaded model type: {loaded_model_type}")
+
+        if loaded_model_type != model_name:
+            print(f"⚠️  WARNING: Requested model '{model_name}' but loaded '{loaded_model_type}' (cached model used)")
+            print("   To force loading the correct model, delete the Whisper cache and try again")
+        else:
+            print(f"✓ Correct model '{model_name}' loaded successfully")
+
+        # Verify model is on correct device
+        if device == "cuda" and torch.cuda.is_available():
+            if next(model.parameters()).device.type != "cuda":
+                print(f"WARNING: Model not on CUDA! Attempting to move...")
+                model = model.to("cuda")
+                print(f"Model moved to: {next(model.parameters()).device}")
+
+        outputs = []
+        segment_files_used = []
+
+        print("Running LECTURE-OPTIMIZED VAD segmentation...")
+        print("Using less aggressive settings for lecture audio...")
+
+        # Less aggressive VAD settings for lectures
+        segments = vad_segment_times_lecture(audio_path, aggressiveness=0, frame_duration_ms=30, padding_ms=500)
+        print(f"Raw segments found: {len(segments)}")
+
+        # Less restrictive post-processing for lectures
+        segments = post_process_segments_lecture(segments, min_duration=0.1, merge_gap=1.0, max_segments=500)
+        print(f"Segments after lecture-optimized post-processing: {len(segments)}")
+
+        if len(segments) == 0:
+            print("⚠️  No segments found with VAD, falling back to transcribing entire file...")
+            # Fallback to no-VAD if no segments found
+            res = model.transcribe(audio_path, language=None,
+                                 compression_ratio_threshold=float('inf'),  # Disable repetitive content detection
+                                 logprob_threshold=-1.0,                    # Disable low-confidence filtering
+                                 no_speech_threshold=0.05,                  # Very low threshold for lectures
+                                 condition_on_previous_text=False,          # Disable context dependency
+                                 temperature=0.0)                           # Use deterministic decoding
+            outputs = [res.get("text", "").strip()]
+        else:
+            seg_files = []
+            for idx, (s, e) in enumerate(segments):
+                seg_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                seg_tmp.close()
+                print(f"Extracting segment {idx+1}/{len(segments)}: {s:.2f}-{e:.2f}s ({e-s:.2f}s duration)")
+                extract_segment(audio_path, s, e, seg_tmp.name, bitrate=bitrate)
+                seg_files.append(seg_tmp.name)
+                temp_files.append(seg_tmp.name)
+
+            # Transcribe each segment with lecture-optimized settings
+            for seg in seg_files:
+                print(f"Transcribing segment {seg}")
+                # Lecture-optimized Whisper settings
+                res = model.transcribe(seg, language=None,
+                                     compression_ratio_threshold=float('inf'),  # Disable repetitive content detection
+                                     logprob_threshold=-2.0,                    # Even more permissive confidence threshold
+                                     no_speech_threshold=0.05,                  # Very low threshold for lectures
+                                     condition_on_previous_text=False,          # Disable context dependency
+                                     temperature=0.0,                           # Use deterministic decoding
+                                     beam_size=5,                              # Higher quality beam search
+                                     patience=2.0)                             # More thorough processing
+                text = res.get("text", "").strip()
+                if text:  # Only add non-empty transcriptions
+                    outputs.append(text)
+
+            segment_files_used = seg_files
+
+        full_text = "\n\n".join(outputs)
+
+        if punctuate:
+            print("Running punctuation model to restore punctuation...")
+            pm = PunctuationModel()
+            full_text = pm.restore_punctuation(full_text)
+
+        # Clean fillers but be less aggressive for lectures
+        full_text = clean_fillers_lecture(full_text)
+
+        # Determine output directory and base filename
+        if output_dir:
+            # Use the specified output directory
+            output_base = os.path.join(output_dir, os.path.splitext(os.path.basename(input_path))[0])
+        else:
+            # Use Downloads folder as default
+            downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+            output_base = os.path.join(downloads_dir, os.path.splitext(os.path.basename(input_path))[0])
+
+        # Save transcription as text file
+        out_txt_path = output_base + "_lecture_transcription.txt"
+        with open(out_txt_path, "w", encoding="utf-8") as f:
+            f.write(full_text)
+        print(f"Lecture transcription saved to {out_txt_path}")
+        log_outputs.append(os.path.abspath(out_txt_path))
+
+        doc = Document()
+        doc.add_heading("Lecture Transcription", 0)
+        doc.add_paragraph(f"Source: {os.path.basename(input_path)}")
+        if media_length:
+            doc.add_paragraph(f"Duration: {format_duration(media_length)}")
+        doc.add_paragraph(f"Model: {model_name} (Lecture-Optimized)")
+        doc.add_paragraph(f"Segments Processed: {len(outputs)}")
+        doc.add_paragraph("")
+
+        for para in split_into_paragraphs(full_text):
+            doc.add_paragraph(para)
+        out_docx = output_base + "_lecture.docx"
+        doc.save(out_docx)
+        print(f"Word document saved to {out_docx}")
+        log_outputs.append(os.path.abspath(out_docx))
+
+        # Include segments if kept
+        if keep_temp and segment_files_used:
+            log_outputs.extend([os.path.abspath(p) for p in segment_files_used])
+
+        end_time = time.time()
+        elapsed = end_time - start_time
+
+        # Write log file
+        orig_base = os.path.splitext(os.path.basename(input_path))[0]
+        log_name = f"{orig_base}_lecture_transcription_log.txt"
+        log_dir = os.path.dirname(os.path.abspath(out_txt_path)) if out_txt_path else os.path.dirname(os.path.abspath(input_path))
+        log_path = os.path.join(log_dir, log_name)
+
+        # Convert paths to forward slashes for readability
+        input_path_clean = os.path.abspath(input_path).replace('\\', '/')
+        output_paths_clean = [os.path.abspath(p).replace('\\', '/') for p in log_outputs]
+
+        try:
+            with open(log_path, "w", encoding="utf-8") as lf:
+                lf.write("LECTURE TRANSCRIPTION LOG\n")
+                lf.write("=" * 50 + "\n\n")
+                lf.write(f"Input File: {input_path_clean}\n")
+                lf.write(f"Model: {model_name} (Lecture-Optimized)\n")
+                lf.write(f"Device: {device}\n")
+                lf.write(f"Preprocess: {bool(preprocess)}\n")
+                lf.write(f"VAD Segmentation: LECTURE-OPTIMIZED\n")
+                lf.write(f"Punctuation Restore: {bool(punctuate)}\n")
+                lf.write(f"Processing Time: {format_duration(elapsed)}\n")
+                if media_length is not None:
+                    lf.write(f"Original Length: {format_duration(media_length)}\n")
+                lf.write(f"Segments Found: {len(segments) if 'segments' in locals() else 0}\n")
+                lf.write(f"Segments Transcribed: {len(outputs)}\n")
+                lf.write(f"Temp Files Removed: {not keep_temp}\n\n")
+                lf.write("Output Files:\n")
+                for output_path in output_paths_clean:
+                    lf.write(f"  - {output_path}\n")
+            print(f"Log written to {log_path}")
+        except Exception as e:
+            print(f"Failed to write log file: {e}")
+
+    finally:
+        if not keep_temp:
+            for p in temp_files:
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
+    return out_txt_path
 
 
 if __name__ == "__main__":

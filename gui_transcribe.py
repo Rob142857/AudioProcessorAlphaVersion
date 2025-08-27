@@ -66,14 +66,18 @@ def run_transcription(input_file: str, outdir: str, options: dict, output_queue:
                                       vad=True,
                                       punctuate=True)
         
-        else:
-            # Fallback to auto mode
-            from transcribe_auto import transcribe_file_auto
-            output_queue.put(f"Falling back to AUTO-OPTIMIZED mode...\n")
-            out_txt = transcribe_file_auto(input_file,
-                                         model_name=options.get("model", "medium"),
-                                         output_dir=outdir,
-                                         target_utilization=85)
+        elif device_mode == "troubleshoot":
+            # Run troubleshooting script to test different approaches
+            from troubleshoot_transcription import run_troubleshooting_test
+            output_queue.put(f"Starting TROUBLESHOOTING transcription for: {input_file}\n")
+            output_queue.put("🔧 Running multiple transcription tests to identify issues...\n")
+            output_queue.put("This will test: VAD vs No-VAD, Medium vs Large models\n")
+            
+            # Run the troubleshooting test
+            run_troubleshooting_test(input_file, outdir)
+            
+            output_queue.put(f"✓ Troubleshooting complete! Check Downloads folder for results.\n")
+            output_queue.put(f"  → Multiple test files created for comparison\n")
         
         output_queue.put(f"✓ Transcription complete! Files saved to Downloads folder.\n")
         output_queue.put(f"  → Text file: {os.path.basename(out_txt)}\n")
@@ -158,7 +162,7 @@ def launch_gui(default_outdir: str = None):
     # Processing selection (same row)
     ttk.Label(settings_frame, text="Processing:").grid(column=2, row=0, sticky=tk.W, padx=(20, 10))
     device_var = tk.StringVar(value="auto")
-    device_combo = ttk.Combobox(settings_frame, textvariable=device_var, values=("auto", "optimized", "cpu"), 
+    device_combo = ttk.Combobox(settings_frame, textvariable=device_var, values=("auto", "optimized", "cpu", "troubleshoot"), 
                                state="readonly", width=15)
     device_combo.grid(column=3, row=0, sticky=tk.W)
     
@@ -167,7 +171,7 @@ def launch_gui(default_outdir: str = None):
                           font=('TkDefaultFont', 8), foreground='#666666')
     model_info.grid(column=0, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
 
-    processing_info = ttk.Label(settings_frame, text="Auto: Best • Hybrid: GPU+CPU • Aggressive: Maximum cores • CPU: All • CUDA: NVIDIA", 
+    processing_info = ttk.Label(settings_frame, text="Auto: Best • Hybrid: GPU+CPU • Troubleshoot: Test all • CPU: CPU only", 
                                font=('TkDefaultFont', 8), foreground='#666666')
     processing_info.grid(column=2, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
 
@@ -271,10 +275,16 @@ def launch_gui(default_outdir: str = None):
                         pass
                         
                 # Detect phase changes for status updates
-                elif any(phase in msg for phase in ["Loading", "Preprocessing", "Extracting", "Transcribing", "Complete"]):
+                elif any(phase in msg for phase in ["Loading", "Preprocessing", "Extracting", "Transcribing", "Complete", "Model", "Detected loaded model"]):
                     # Update status based on current phase
-                    if "Loading" in msg:
+                    if "Loading Whisper model" in msg:
                         progress_label.configure(text="Loading AI models...")
+                        progress_var.set(5)
+                    elif "Detected loaded model" in msg:
+                        progress_label.configure(text="AI models loaded successfully")
+                        progress_var.set(8)
+                    elif "WARNING: Requested model" in msg and "but loaded" in msg:
+                        progress_label.configure(text="⚠️ Wrong model loaded - use cache clear button")
                         progress_var.set(5)
                     elif "Preprocessing" in msg:
                         progress_label.configure(text="Preprocessing audio...")
@@ -386,6 +396,24 @@ def launch_gui(default_outdir: str = None):
     # Run button
     run_btn = ttk.Button(mainframe, text="Start Transcription", command=start_transcription_thread)
     run_btn.grid(column=1, row=7, columnspan=2, pady=(10, 0))
+
+    # Cache clear button
+    def clear_cache():
+        """Clear Whisper model cache to force fresh downloads."""
+        try:
+            import subprocess
+            result = subprocess.run([sys.executable, "clear_whisper_cache.py"], 
+                                  capture_output=True, text=True, cwd=os.getcwd())
+            if result.returncode == 0:
+                messagebox.showinfo("Cache Cleared", "Whisper model cache cleared successfully!\nNext transcription will download fresh models.")
+            else:
+                messagebox.showerror("Cache Clear Failed", f"Failed to clear cache:\n{result.stderr}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to run cache clear script:\n{str(e)}")
+
+    cache_btn = ttk.Button(mainframe, text="Clear Model Cache", command=clear_cache)
+    cache_btn.grid(column=0, row=7, pady=(10, 0))
+    cache_btn.configure(width=15)
 
     poll_queue()
     root.mainloop()
