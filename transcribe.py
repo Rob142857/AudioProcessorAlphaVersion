@@ -13,7 +13,12 @@ from docx import Document
 from moviepy import VideoFileClip, AudioFileClip
 import imageio_ffmpeg as iio_ffmpeg
 from deepmultilingualpunctuation import PunctuationModel
-import webrtcvad
+try:
+    import webrtcvad
+    WEBRTCVAD_AVAILABLE = True
+except ImportError:
+    WEBRTCVAD_AVAILABLE = False
+    print("⚠️  webrtcvad not available - Voice Activity Detection disabled")
 import re
 import time
 import json
@@ -438,6 +443,32 @@ def get_pcm_from_file(input_path):
 
 
 def vad_segment_times(input_path, aggressiveness=3, frame_duration_ms=30, padding_ms=300):
+    """Voice Activity Detection to segment audio. Falls back to simple duration-based segments if webrtcvad unavailable."""
+    
+    if not WEBRTCVAD_AVAILABLE:
+        print("⚠️  webrtcvad not available - using simple duration-based segmentation")
+        # Fallback: create segments based on duration (every 30 seconds)
+        try:
+            audio_clip = AudioFileClip(input_path)
+            duration = audio_clip.duration
+            audio_clip.close()
+            
+            segments = []
+            segment_length = 30.0  # 30 second segments
+            for i in range(0, int(duration), int(segment_length)):
+                start = float(i)
+                end = min(float(i + segment_length), duration)
+                segments.append((start, end))
+            
+            print(f"📊 Created {len(segments)} duration-based segments ({segment_length}s each)")
+            return segments
+            
+        except Exception as e:
+            print(f"❌ Error creating fallback segments: {e}")
+            # Last resort: single segment for entire audio
+            return [(0.0, 60.0)]  # Assume 60s max, will be clipped later
+    
+    # Original webrtcvad implementation
     pcm = get_pcm_from_file(input_path)
     vad = webrtcvad.Vad(aggressiveness)
     frames = list(frames_from_pcm(pcm, frame_duration_ms=frame_duration_ms))

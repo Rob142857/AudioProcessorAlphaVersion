@@ -19,7 +19,12 @@ from docx import Document
 from moviepy import VideoFileClip, AudioFileClip
 import imageio_ffmpeg as iio_ffmpeg
 from deepmultilingualpunctuation import PunctuationModel
-import webrtcvad
+try:
+    import webrtcvad
+    WEBRTCVAD_AVAILABLE = True
+except ImportError:
+    WEBRTCVAD_AVAILABLE = False
+    print("⚠️  webrtcvad not available - Voice Activity Detection disabled")
 import re
 import time
 import json

@@ -165,6 +165,13 @@ python -m pip install torch-directml
 - **"Command not recognized"**: Make sure you're using PowerShell or Command Prompt as Administrator
 - **Download fails**: Check internet connection and Windows security settings
 - **Python errors**: The installer handles everything - just run the command again
+- **webrtcvad build error**: This package requires Visual Studio Build Tools. The app will work without it using simple duration-based segmentation instead of Voice Activity Detection
+
+**Alternative Installation (if webrtcvad fails):**
+```cmd
+# Use this if the main installer fails due to build tools
+curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install_simple.bat -o install_simple.bat && install_simple.bat
+```
 
 **Performance Issues:**
 - **Out of memory**: Switch to Medium model or CPU processing

@@ -1,22 +1,17 @@
 @echo off
-echo === Speech2Text Complete Installer ===
-echo Installing prerequisites for virgin Windows...
+echo === Speech2Text Simple Installer ===
+echo Installing only essential prerequisites...
 
 REM Install Python 3.11 x64
 echo Installing Python 3.11 x64...
 winget install --id Python.Python.3.11 --scope user --force --accept-package-agreements --accept-source-agreements
 
-REM Install Visual C++ Redistributables
-echo Installing Visual C++ Redistributables...
-winget install --id Microsoft.VCRedist.2015+.x64 --force --accept-package-agreements --accept-source-agreements
-
-REM Install Visual Studio Build Tools (required for compiling packages like webrtcvad)
-echo Installing Visual Studio Build Tools...
-winget install --id Microsoft.VisualStudio.2022.BuildTools --force --accept-package-agreements --accept-source-agreements
-
-REM Install Git
+REM Install Git for downloading the repository
 echo Installing Git...
 winget install --id Git.Git --force --accept-package-agreements --accept-source-agreements
+
+REM Navigate to Downloads
+cd /d "%USERPROFILE%\Downloads"
 
 REM Navigate to Downloads
 cd /d "%USERPROFILE%\Downloads"
@@ -47,8 +42,12 @@ if exist "speech2textrme" (
 
 cd speech2textrme
 
-echo === Prerequisites Complete! ===
-echo Launching Speech2Text installer...
+echo === Basic Prerequisites Complete! ===
+echo.
+echo ⚠️  NOTE: This installer skips Visual Studio Build Tools
+echo ⚠️  webrtcvad may fail to install, but the app will work without it
+echo ℹ️  Voice Activity Detection will use simple duration-based segmentation
+echo.
 
 REM Launch the main installer
 call run.bat
