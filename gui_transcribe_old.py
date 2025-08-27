@@ -126,7 +126,7 @@ def launch_gui(default_outdir: str = None):
     ttk.Checkbutton(opts_frame, text="Keep temporary files", variable=keep_temp_var).grid(column=0, row=2, sticky=tk.W, pady=4)
 
     aggressive_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(opts_frame, text="Aggressive mode (ignore music/copyright)", variable=aggressive_var).grid(column=1, row=2, sticky=tk.W, pady=4)
+    ttk.Checkbutton(opts_frame, text="Optimised mode (ignore music/copyright)", variable=aggressive_var).grid(column=1, row=2, sticky=tk.W, pady=4)
 
     bitrate_var = tk.StringVar(value="192k")
     ttk.Label(opts_frame, text="Bitrate:").grid(column=3, row=0, sticky=tk.W, padx=8)

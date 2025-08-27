@@ -1,6 +1,7 @@
 """
-Aggressive GPU+CPU hybrid transcription with maximum hardware utilization.
-This implementation will fully utilize both your GTX 1070 Ti and all 32 CPU cores.
+Optimised GPU+CPU hybrid transcription with maximum hardware utilisation.
+This module provides the most efficient transcription by utilising all available
+hardware resources simultaneously for maximum performance.
 """
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="webrtcvad")
@@ -35,24 +36,24 @@ import gc
 
 
 def adjust_workers_for_model(config, model_name):
-    """Adjust worker counts based on actual model size - AGGRESSIVE RAM utilization."""
+    """Adjust worker counts based on actual model size - OPTIMISED RAM utilisation."""
     model_ram_usage = {
         'tiny': 0.5, 'base': 0.8, 'small': 1.5, 'medium': 2.5, 
         'large': 4.0, 'large-v2': 4.0, 'large-v3': 4.0
     }
     
     actual_ram_per_model = model_ram_usage.get(model_name, 2.5)
-    # AGGRESSIVE: Use almost all RAM - reserve only 1GB (was 4GB)
+    # OPTIMISED: Use almost all RAM - reserve only 1GB (was 4GB)
     usable_ram = max(config["available_ram_gb"] - 1.0, 2.0)
     
     # Recalculate CPU workers based on actual model RAM usage
     max_cpu_workers = int(usable_ram / actual_ram_per_model)
-    # AGGRESSIVE: Allow more workers (was limited to 8)
+    # OPTIMISED: Allow more workers (was limited to 8)
     safe_cpu_workers = min(config["cpu_workers"], max_cpu_workers, 20)
     
     if safe_cpu_workers != config["cpu_workers"]:
         print(f"🧠 Model '{model_name}' requires {actual_ram_per_model}GB RAM per instance")
-        print(f"   AGGRESSIVE adjustment: {config['cpu_workers']} → {safe_cpu_workers} (using {usable_ram:.1f}GB)")
+        print(f"   OPTIMISED adjustment: {config['cpu_workers']} → {safe_cpu_workers} (using {usable_ram:.1f}GB)")
         
         config["cpu_workers"] = safe_cpu_workers
         config["total_workers"] = config["gpu_workers"] + safe_cpu_workers
@@ -154,8 +155,8 @@ def get_optimal_worker_counts():
         # Conservative GPU+CPU configuration with RAM awareness
         gpu_workers = 2  # Keep GPU workers low to save VRAM
         
-        # Calculate AGGRESSIVE CPU workers based on available RAM
-        # Reserve only 1GB for system + other processes (was 4GB - now truly aggressive!)
+        # Calculate OPTIMISED CPU workers based on available RAM
+        # Reserve only 1GB for system + other processes (was 4GB - now truly optimised!)
         usable_ram = max(available_ram_gb - 1.0, 2.0)
         
         # Estimate CPU workers based on RAM per model instance
@@ -163,14 +164,14 @@ def get_optimal_worker_counts():
         estimated_ram_per_worker = model_ram_usage.get('medium', 2.5)
         max_cpu_workers_by_ram = int(usable_ram / estimated_ram_per_worker)
         
-        # AGGRESSIVE: Use ALL available CPU cores and RAM capacity
+        # OPTIMISED: Use ALL available CPU cores and RAM capacity
         cpu_workers = min(
             cpu_cores - 1,  # Leave only 1 core free (was 4!)
             max_cpu_workers_by_ram,  # RAM constraint
             20  # Higher maximum (was 12)
         )
         
-        print(f"🚀 AGGRESSIVE RAM-Maxed Hybrid Config:")
+        print(f"🚀 OPTIMISED RAM-Maxed Hybrid Config:")
         print(f"   GPU Workers: {gpu_workers} (CUDA parallel streams)")
         print(f"   CPU Workers: {cpu_workers} (MAXED - using {usable_ram:.1f}GB usable RAM)")
         print(f"   Total Workers: {gpu_workers + cpu_workers}")
@@ -179,13 +180,13 @@ def get_optimal_worker_counts():
             "gpu_workers": gpu_workers,
             "cpu_workers": cpu_workers,
             "total_workers": gpu_workers + cpu_workers,
-            "segment_extraction_workers": min(cpu_cores // 2, 16),  # More aggressive extraction workers
+            "segment_extraction_workers": min(cpu_cores // 2, 16),  # More optimised extraction workers
             "ram_constraint": True,
             "available_ram_gb": available_ram_gb,
             "estimated_ram_per_model": estimated_ram_per_worker
         }
     else:
-        # AGGRESSIVE CPU-only mode with maximum RAM utilization
+        # OPTIMISED CPU-only mode with maximum RAM utilisation
         usable_ram = max(available_ram_gb - 0.5, 1.0)  # Reserve only 500MB (was 2GB)
         estimated_ram_per_worker = model_ram_usage.get('medium', 2.5)
         max_cpu_workers_by_ram = int(usable_ram / estimated_ram_per_worker)
@@ -196,7 +197,7 @@ def get_optimal_worker_counts():
             16  # Higher maximum (was 8)
         )
         
-        print(f"💻 AGGRESSIVE CPU-Only Config:")
+        print(f"💻 OPTIMISED CPU-Only Config:")
         print(f"   CPU Workers: {cpu_workers} (MAXED - using {usable_ram:.1f}GB usable RAM)")
         
         return {
@@ -331,12 +332,12 @@ def load_models_aggressive(model_name="medium", config=None):
 
 
 def transcribe_segment_aggressive(model, audio_path, segment_info, worker_id):
-    """Aggressive transcription with performance monitoring."""
+    """Optimised transcription with performance monitoring."""
     start_time = time.time()
     segment_path, seg_start, seg_end = segment_info
     
     try:
-        # Aggressive Whisper parameters
+        # Optimised Whisper parameters
         result = model.transcribe(
             segment_path,
             language=None,
@@ -439,7 +440,7 @@ def transcribe_parallel_aggressive(models, segments, config):
         print("⚠️  Warning: No segments to process")
         return []
     
-    print(f"🗣️  Starting aggressive parallel transcription...")
+    print(f"🗣️  Starting optimised parallel transcription...")
     print(f"   Processing {len(segments)} segments with {config['total_workers']} workers")
     
     # Start system monitoring
@@ -619,7 +620,7 @@ def transcribe_parallel_aggressive(models, segments, config):
 
 def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None, force_aggressive=True):
     """
-    Ultra-aggressive transcription using maximum available hardware resources.
+    Ultra-optimised transcription using maximum available hardware resources.
     """
     from transcribe import (vad_segment_times, post_process_segments, 
                           preprocess_audio, get_media_duration, 
@@ -629,7 +630,7 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
     temp_files = []
     
     try:
-        print(f"🚀 AGGRESSIVE GPU+CPU HYBRID TRANSCRIPTION")
+        print(f"🚀 OPTIMISED GPU+CPU HYBRID TRANSCRIPTION")
         print(f"📁 Input: {os.path.basename(input_path)}")
         
         # System info
@@ -649,7 +650,7 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
             output_dir = os.path.join(os.path.expanduser("~"), "Downloads")
         
         # Create temp directory
-        temp_dir = tempfile.mkdtemp(prefix="aggressive_transcribe_")
+        temp_dir = tempfile.mkdtemp(prefix="optimised_transcribe_")
         temp_files.append(temp_dir)
         
         # Get media info
@@ -667,15 +668,15 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
         audio_path = pre_path
         temp_files.append(pre_path)
         
-        # Load models aggressively
+        # Load models optimally
         models = load_models_aggressive(model_name, config)
         if not models:
             raise Exception("Failed to load any models!")
         print()  # Add spacing after model loading
         
-        # VAD segmentation with aggressive settings
-        print("✂️  Running aggressive VAD segmentation...")
-        segments = vad_segment_times(audio_path, aggressiveness=3,  # More aggressive
+        # VAD segmentation with optimised settings
+        print("✂️  Running optimised VAD segmentation...")
+        segments = vad_segment_times(audio_path, aggressiveness=3,  # More optimised
                                    frame_duration_ms=30, padding_ms=100)  # Less padding for more segments
         
         segments = post_process_segments(segments, min_duration=0.3,  # Shorter minimum duration
@@ -697,7 +698,7 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
             # Extract segments with maximum parallelism
             segment_files = extract_segments_aggressive(audio_path, segments, temp_dir, config)
             
-            # Aggressive parallel transcription
+            # Optimised parallel transcription
             results = transcribe_parallel_aggressive(models, segment_files, config)
             
             # Combine results
@@ -721,8 +722,8 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
         
         # Save outputs
         base_name = os.path.splitext(os.path.basename(input_path))[0]
-        txt_path = os.path.join(output_dir, f"{base_name}_aggressive.txt")
-        docx_path = os.path.join(output_dir, f"{base_name}_aggressive.docx")
+        txt_path = os.path.join(output_dir, f"{base_name}_optimised.txt")
+        docx_path = os.path.join(output_dir, f"{base_name}_optimised.docx")
         
         # Save files
         with open(txt_path, "w", encoding="utf-8") as f:
@@ -730,14 +731,14 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
         
         # Create Word document
         doc = Document()
-        doc.add_heading(f'Aggressive Transcription: {base_name}', 0)
+        doc.add_heading(f'Optimised Transcription: {base_name}', 0)
         
         if duration:
             doc.add_paragraph(f'Duration: {format_duration(duration)}')
         
         elapsed = time.time() - start_time
         doc.add_paragraph(f'Processing time: {format_duration(elapsed)}')
-        doc.add_paragraph(f'Model: {model_name} (Aggressive GPU+CPU Hybrid)')
+        doc.add_paragraph(f'Model: {model_name} (Optimised GPU+CPU Hybrid)')
         doc.add_paragraph(f'Hardware: {gpu_name} + {cpu_cores} CPU cores')
         
         if duration and elapsed > 0:
@@ -754,7 +755,7 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
         
         # Final stats
         elapsed = time.time() - start_time
-        print(f"\n🎉 AGGRESSIVE TRANSCRIPTION COMPLETE!")
+        print(f"\n🎉 OPTIMISED TRANSCRIPTION COMPLETE!")
         print(f"📄 Text file: {txt_path}")
         print(f"📄 Word document: {docx_path}")
         print(f"⏱️  Total time: {format_duration(elapsed)}")
@@ -766,7 +767,7 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
         return txt_path
         
     except Exception as e:
-        print(f"❌ Aggressive transcription failed: {e}")
+        print(f"❌ Optimised transcription failed: {e}")
         raise
         
     finally:
@@ -782,7 +783,7 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Aggressive GPU+CPU hybrid transcription")
+    parser = argparse.ArgumentParser(description="Optimised GPU+CPU hybrid transcription")
     parser.add_argument("--input", required=True, help="Input audio/video file")
     parser.add_argument("--model", default="medium", choices=["tiny", "base", "small", "medium", "large"])
     parser.add_argument("--output-dir", help="Output directory (default: Downloads)")

@@ -745,6 +745,90 @@ def transcribe_file_no_vad(input_path, model_name="medium", preprocess=True, kee
     return out_txt_path
 
 
+def vad_segment_times_lecture(input_path, aggressiveness=0, frame_duration_ms=30, padding_ms=500):
+    """Voice Activity Detection optimized for lectures with less optimised settings."""
+    if not WEBRTCVAD_AVAILABLE:
+        print("⚠️  webrtcvad not available - using simple duration-based segmentation for lectures")
+        # Fallback: create segments based on duration (every 60 seconds for lectures)
+        try:
+            audio_clip = AudioFileClip(input_path)
+            duration = audio_clip.duration
+            audio_clip.close()
+
+            segments = []
+            segment_length = 60.0  # 60 second segments for lectures
+            for i in range(0, int(duration), int(segment_length)):
+                start = float(i)
+                end = min(float(i + segment_length), duration)
+                segments.append((start, end))
+
+            print(f"📊 Created {len(segments)} lecture-duration-based segments ({segment_length}s each)")
+            return segments
+
+        except Exception as e:
+            print(f"❌ Error creating lecture fallback segments: {e}")
+            # Last resort: single segment for entire audio
+            return [(0.0, 60.0)]  # Assume 60s max, will be clipped later
+
+    # Original webrtcvad implementation with lecture-optimized settings
+    pcm = get_pcm_from_file(input_path)
+    vad = webrtcvad.Vad(aggressiveness)  # Less optimised for lectures
+    frames = list(frames_from_pcm(pcm, frame_duration_ms=frame_duration_ms))
+    sample_rate = 16000
+    in_speech = False
+    segments = []
+    speech_start = 0
+    for i, frame in enumerate(frames):
+        is_speech = False
+        if len(frame) == int(sample_rate * 2 * (frame_duration_ms/1000.0)):
+            is_speech = vad.is_speech(frame, sample_rate)
+        t = (i * frame_duration_ms) / 1000.0
+        if is_speech and not in_speech:
+            in_speech = True
+            speech_start = t
+        elif not is_speech and in_speech:
+            in_speech = False
+            speech_end = t
+            # Expand by more padding for lectures (speakers may pause)
+            start = max(0, speech_start - (padding_ms/1000.0))
+            end = speech_end + (padding_ms/1000.0)
+            segments.append((start, end))
+    # If file ends while in speech
+    if in_speech:
+        speech_end = (len(frames) * frame_duration_ms) / 1000.0
+        start = max(0, speech_start - (padding_ms/1000.0))
+        end = speech_end + (padding_ms/1000.0)
+        segments.append((start, end))
+    return segments
+
+
+def post_process_segments_lecture(segments, min_duration=0.1, merge_gap=1.0, max_segments=500):
+    """Post-process segments optimized for lectures - less restrictive than standard VAD."""
+    if not segments:
+        return []
+    # Sort
+    segs = sorted(segments, key=lambda s: s[0])
+    merged = [list(segs[0])]
+    for s, e in segs[1:]:
+        last = merged[-1]
+        # Merge with larger gap for lectures (speakers pause more)
+        if s - last[1] <= merge_gap:
+            last[1] = max(last[1], e)
+        else:
+            merged.append([s, e])
+    # Filter short segments (but less restrictive for lectures)
+    filtered = []
+    for s, e in merged:
+        if (e - s) >= min_duration:
+            filtered.append((s, e))
+    # Allow more segments for lectures
+    if len(filtered) > max_segments:
+        # Keep longest segments
+        filtered = sorted(filtered, key=lambda t: t[1]-t[0], reverse=True)[:max_segments]
+        filtered = sorted(filtered, key=lambda t: t[0])
+    return filtered
+
+
 def post_process_segments(segments, min_duration=0.5, merge_gap=0.3, max_segments=200):
     """Merge nearby segments, drop very short ones, and cap total segments.
     segments: list of (start,end) tuples sorted by start
@@ -776,7 +860,7 @@ def post_process_segments(segments, min_duration=0.5, merge_gap=0.3, max_segment
 
 def transcribe_lecture(input_path, model_name="medium", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", punctuate=True, output_dir=None):
     """
-    Specialized transcription for lectures with less aggressive VAD settings.
+    Specialized transcription for lectures with less optimised VAD settings.
     Lectures often have pauses, background noise, and varying audio quality that standard VAD misses.
     """
     ensure_ffmpeg_in_path()
@@ -854,9 +938,9 @@ def transcribe_lecture(input_path, model_name="medium", preprocess=True, keep_te
         segment_files_used = []
 
         print("Running LECTURE-OPTIMIZED VAD segmentation...")
-        print("Using less aggressive settings for lecture audio...")
+        print("Using less optimised settings for lecture audio...")
 
-        # Less aggressive VAD settings for lectures
+        # Less optimised VAD settings for lectures
         segments = vad_segment_times_lecture(audio_path, aggressiveness=0, frame_duration_ms=30, padding_ms=500)
         print(f"Raw segments found: {len(segments)}")
 
@@ -873,7 +957,13 @@ def transcribe_lecture(input_path, model_name="medium", preprocess=True, keep_te
                                  no_speech_threshold=0.05,                  # Very low threshold for lectures
                                  condition_on_previous_text=False,          # Disable context dependency
                                  temperature=0.0)                           # Use deterministic decoding
-            outputs = [res.get("text", "").strip()]
+            # Handle both dict and list return types from Whisper
+            if isinstance(res, dict):
+                outputs = [res.get("text", "").strip()]
+            elif isinstance(res, list) and len(res) > 0:
+                outputs = [str(res[0]).strip()]
+            else:
+                outputs = [""]
         else:
             seg_files = []
             for idx, (s, e) in enumerate(segments):
@@ -896,7 +986,13 @@ def transcribe_lecture(input_path, model_name="medium", preprocess=True, keep_te
                                      temperature=0.0,                           # Use deterministic decoding
                                      beam_size=5,                              # Higher quality beam search
                                      patience=2.0)                             # More thorough processing
-                text = res.get("text", "").strip()
+                # Handle both dict and list return types from Whisper
+                if isinstance(res, dict):
+                    text = res.get("text", "").strip()
+                elif isinstance(res, list) and len(res) > 0:
+                    text = str(res[0]).strip()
+                else:
+                    text = ""
                 if text:  # Only add non-empty transcriptions
                     outputs.append(text)
 
@@ -909,7 +1005,7 @@ def transcribe_lecture(input_path, model_name="medium", preprocess=True, keep_te
             pm = PunctuationModel()
             full_text = pm.restore_punctuation(full_text)
 
-        # Clean fillers but be less aggressive for lectures
+        # Clean fillers but be less optimised for lectures
         full_text = clean_fillers_lecture(full_text)
 
         # Determine output directory and base filename
@@ -993,6 +1089,34 @@ def transcribe_lecture(input_path, model_name="medium", preprocess=True, keep_te
                     pass
 
     return out_txt_path
+
+
+def clean_fillers_lecture(text):
+    """Clean fillers but be less optimised for lectures (preserve academic language)."""
+    # Less optimised filler removal for lectures
+    fillers = [r"\bumm?\b", r"\buh\b", r"\bhello\b", r"\bhi\b"]
+    pattern = re.compile("|".join(fillers), flags=re.IGNORECASE)
+    cleaned = pattern.sub("", text)
+    # Collapse extra spaces
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    return cleaned
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Transcribe audio/video to text and docx with optimized settings")
+    parser.add_argument("input", help="input audio or video file")
+    parser.add_argument("--model", default="medium", help="whisper model: medium, large")
+    parser.add_argument("--keep-temp", action="store_true", help="keep temporary files")
+    parser.add_argument("--bitrate", default="192k", help="mp3 bitrate for converted audio")
+    parser.add_argument("--device", default="auto", help="device preference: auto/cpu/cuda/dml")
+    parser.add_argument("--output-dir", dest="output_dir", help="output directory for txt and docx files (default: Downloads)")
+    args = parser.parse_args(argv)
+
+    if not os.path.isfile(args.input):
+        print(f"File not found: {args.input}")
+        sys.exit(1)
+
+    transcribe_file(args.input, model_name=args.model, keep_temp=args.keep_temp, bitrate=args.bitrate, device_preference=args.device, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":

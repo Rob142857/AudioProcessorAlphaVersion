@@ -127,7 +127,7 @@ def run_troubleshooting_test(input_file, output_dir=None):
         print("💡 Recommendation: Use this approach for your transcriptions")
     print()
     print("🔍 TROUBLESHOOTING TIPS:")
-    print("   • If No VAD versions are much longer, VAD is too aggressive")
+    print("   • If No VAD versions are much longer, VAD is too optimised")
     print("   • If Large model versions are much longer, use Large model")
     print("   • Check the actual content of files to see what was captured")
     print("   • Look at the log files for segment information")

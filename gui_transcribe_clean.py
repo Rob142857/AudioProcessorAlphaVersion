@@ -40,7 +40,7 @@ def run_transcription(input_file: str, outdir: str, options: dict, output_queue:
                                          target_utilization=85)
                                          
         elif device_mode == "optimized":
-            # Use enforced CPU+GPU hybrid processing (aggressive mode)
+            # Use enforced CPU+GPU hybrid processing (optimised mode)
             from transcribe_aggressive import transcribe_file_aggressive
             output_queue.put(f"Starting OPTIMIZED GPU+CPU transcription for: {input_file}\n")
             output_queue.put("Using enforced hybrid processing: GPU + CPU cores working simultaneously\n")
@@ -167,7 +167,7 @@ def launch_gui(default_outdir: str = None):
                           font=('TkDefaultFont', 8), foreground='#666666')
     model_info.grid(column=0, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
 
-    processing_info = ttk.Label(settings_frame, text="Auto: Best • Hybrid: GPU+CPU • Aggressive: Maximum cores • CPU: All • CUDA: NVIDIA", 
+    processing_info = ttk.Label(settings_frame, text="Auto: Best • Hybrid: GPU+CPU • Optimised: Maximum cores • CPU: All • CUDA: NVIDIA", 
                                font=('TkDefaultFont', 8), foreground='#666666')
     processing_info.grid(column=2, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
 

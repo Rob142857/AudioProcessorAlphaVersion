@@ -40,7 +40,7 @@ def run_transcription(input_file: str, outdir: str, options: dict, output_queue:
                                          target_utilization=85)
                                          
         elif device_mode == "optimized":
-            # Use enforced CPU+GPU hybrid processing (aggressive mode)
+            # Use enforced CPU+GPU hybrid processing (optimised mode)
             from transcribe_aggressive import transcribe_file_aggressive
             output_queue.put(f"Starting OPTIMIZED GPU+CPU transcription for: {input_file}\n")
             output_queue.put("Using enforced hybrid processing: GPU + CPU cores working simultaneously\n")
@@ -162,7 +162,7 @@ def launch_gui(default_outdir: str = None):
     # Processing selection (same row)
     ttk.Label(settings_frame, text="Processing:").grid(column=2, row=0, sticky=tk.W, padx=(20, 10))
     device_var = tk.StringVar(value="auto")
-    device_combo = ttk.Combobox(settings_frame, textvariable=device_var, values=("auto", "optimized", "cpu", "troubleshoot"), 
+    device_combo = ttk.Combobox(settings_frame, textvariable=device_var, values=("auto", "optimised", "cpu", "troubleshoot"), 
                                state="readonly", width=15)
     device_combo.grid(column=3, row=0, sticky=tk.W)
     
@@ -171,7 +171,7 @@ def launch_gui(default_outdir: str = None):
                           font=('TkDefaultFont', 8), foreground='#666666')
     model_info.grid(column=0, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
 
-    processing_info = ttk.Label(settings_frame, text="Auto: Best • Hybrid: GPU+CPU • Troubleshoot: Test all • CPU: CPU only", 
+    processing_info = ttk.Label(settings_frame, text="Auto: Best • Optimised: GPU+CPU • Troubleshoot: Test all • CPU: CPU only", 
                                font=('TkDefaultFont', 8), foreground='#666666')
     processing_info.grid(column=2, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
 
@@ -292,7 +292,7 @@ def launch_gui(default_outdir: str = None):
                     elif "Extracting" in msg:
                         progress_label.configure(text="Extracting audio segments...")
                         progress_var.set(20)
-                    elif "Transcribing" in msg or "Starting aggressive" in msg:
+                    elif "Transcribing" in msg or "Starting optimised" in msg:
                         progress_label.configure(text="Transcribing audio...")
                         progress_var.set(30)
                     elif "Complete" in msg and "successfully" in msg:
