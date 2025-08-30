@@ -1,11 +1,12 @@
-"""Optimized GUI for Speech-to-Text transcription with best quality settings.
+"""Simplified GUI for Speech-to-Text transcription with large model only.
 
-This GUI uses optimized settings for best transcription quality:
-- Preprocessing al    processing_info = ttk.Label(settings_frame, text="Auto: Intelligent optimization (80-90% utilization) • Optimized: CPU+GPU enforced • CPU: CPU only", 
-                                font=('TkDefaultFont', 9), foreground='#666666')ys enabled
-- VAD segmentation always enabled  
-- Punctuation restoration always enabled
-- Optimized Whisper parameters to capture all speech
+This GUI uses a single configuration:
+- Large model only
+- Auto device detection (CUDA > DirectML > CPU)
+- No VAD segmentation
+- No preprocessing
+- Maximum threads based on RAM
+- AI guardrails disabled
 """
 import argparse
 import os
@@ -22,76 +23,25 @@ except Exception:
 # Default Downloads folder with proper Windows path handling
 DEFAULT_DOWNLOADS = os.path.normpath(os.path.join(os.path.expanduser("~"), "Downloads"))
 
-def run_transcription(input_file: str, outdir: str, options: dict, output_queue: queue.Queue):
-    """Call transcription with optimized settings based on simplified options."""
-    # Initialize out_txt to prevent UnboundLocalError
-    out_txt = None
-    
+def run_transcription(input_file: str, outdir: str, output_queue: queue.Queue):
+    """Run simplified transcription with large model and auto device detection."""
     try:
-        device_mode = options.get("device", "auto")
+        # Import and run the simplified transcription
+        from transcribe_aggressive import transcribe_file_simple_auto
         
-        if device_mode == "auto":
-            # Use intelligent auto-optimization for maximum resource utilization
-            from transcribe_auto import transcribe_file_auto
-            output_queue.put(f"🤖 Starting AUTO-OPTIMIZED transcription for: {os.path.basename(input_file)}\n")
-            output_queue.put("🔍 Analyzing system capabilities and optimizing resource utilization...\n")
-            output_queue.put("Target: 80-90% CPU/GPU utilization for maximum performance!\n")
-            
-            out_txt = transcribe_file_auto(input_file,
-                                         model_name=options.get("model", "medium"),
-                                         output_dir=outdir,
-                                         target_utilization=85)
-                                         
-        elif device_mode == "optimized":
-            # Use enforced CPU+GPU hybrid processing (optimised mode)
-            from transcribe_aggressive import transcribe_file_aggressive
-            output_queue.put(f"🚀 Starting OPTIMIZED GPU+CPU transcription for: {os.path.basename(input_file)}\n")
-            output_queue.put("Using enforced hybrid processing: GPU + CPU cores working simultaneously\n")
-            output_queue.put("System monitoring active - watch your Task Manager CPU/GPU usage!\n")
-            
-            out_txt = transcribe_file_aggressive(input_file,
-                                               model_name=options.get("model", "medium"),
-                                               output_dir=outdir,
-                                               force_aggressive=True)
+        output_queue.put(f"🚀 Starting SIMPLIFIED transcription for: {os.path.basename(input_file)}\n")
+        output_queue.put("Using Large model with auto device detection\n")
+        output_queue.put("No VAD, no preprocessing, maximum threads\n")
         
-        elif device_mode == "cpu":
-            # Use CPU-only processing with optimizations
-            from transcribe import transcribe_file
-            output_queue.put(f"🖥️ Starting CPU-ONLY transcription for: {os.path.basename(input_file)}\n")
-            output_queue.put("Using CPU-only processing with quality optimizations\n")
-            
-            out_txt = transcribe_file(input_file,
-                                      model_name=options.get("model", "medium"),
-                                      keep_temp=options.get("keep_temp", False),
-                                      device_preference="cpu",
-                                      output_dir=outdir,
-                                      preprocess=True,
-                                      vad=True,
-                                      punctuate=True)
+        out_txt = transcribe_file_simple_auto(input_file, output_dir=outdir)
         
-        elif device_mode == "troubleshoot":
-            # Run troubleshooting script to test different approaches
-            from troubleshoot_transcription import run_troubleshooting_test
-            output_queue.put(f"Starting TROUBLESHOOTING transcription for: {input_file}\n")
-            output_queue.put("🔧 Running multiple transcription tests to identify issues...\n")
-            output_queue.put("This will test: VAD vs No-VAD, Medium vs Large models\n")
-            
-            # Run the troubleshooting test
-            run_troubleshooting_test(input_file, outdir)
-            
-            output_queue.put(f"✓ Troubleshooting complete! Check Downloads folder for results.\n")
-            output_queue.put(f"  → Multiple test files created for comparison\n")
-            
-            # For troubleshoot mode, we don't have a single out_txt file
-            out_txt = "troubleshooting_complete"
-        
-        # Only show file output messages if we have actual output files
-        if out_txt and out_txt != "troubleshooting_complete":
+        if out_txt and os.path.exists(out_txt):
             output_queue.put(f"✅ Transcription complete! Files saved to Downloads folder.\n")
             output_queue.put(f"  📄 Text file: {os.path.basename(out_txt)}\n")
             output_queue.put(f"  📄 Word document: {os.path.basename(out_txt.replace('.txt', '.docx'))}\n")
-        elif device_mode == "troubleshoot":
-            output_queue.put(f"✅ Transcription complete! Files saved to Downloads folder.\n")
+        else:
+            output_queue.put("❌ Transcription failed or no output generated.\n")
+            
     except Exception as e:
         output_queue.put(f"✗ Transcription failed: {e}\n")
 
@@ -117,28 +67,51 @@ def launch_gui(default_outdir: str = None):
         return
 
     root = tk.Tk()
-    root.title("Speech-to-Text Transcription")
-    root.geometry("950x700")
+    root.title("🎙️ Audio Transcription Pro")
+    root.geometry("800x650")
     root.resizable(True, True)
+    root.configure(bg='#1e1e1e')  # Dark background
 
     # Configure grid weights for proper resizing
     root.columnconfigure(0, weight=1)
     root.rowconfigure(0, weight=1)
 
-    mainframe = ttk.Frame(root, padding="15 15 15 15")
+    # Modern styling
+    style = ttk.Style()
+    style.configure('Modern.TFrame', background='#1e1e1e')
+    style.configure('Modern.TLabel', background='#1e1e1e', foreground='#ffffff', font=('Segoe UI', 10))
+    style.configure('Modern.TButton', font=('Segoe UI', 10, 'bold'), padding=10)
+    style.configure('Title.TLabel', font=('Segoe UI', 16, 'bold'), foreground='#007acc', background='#1e1e1e')
+    style.configure('Card.TLabelframe', background='#2d2d30', foreground='#ffffff', borderwidth=1, relief='solid')
+    style.configure('Card.TLabelframe.Label', background='#2d2d30', foreground='#007acc', font=('Segoe UI', 11, 'bold'))
+
+    mainframe = ttk.Frame(root, style='Modern.TFrame', padding="20 20 20 20")
     mainframe.grid(column=0, row=0, sticky=(tk.N, tk.W, tk.E, tk.S))
     mainframe.columnconfigure(1, weight=1)
-    mainframe.rowconfigure(5, weight=1)
+    mainframe.rowconfigure(4, weight=1)
 
-    # Title
-    title_label = ttk.Label(mainframe, text="Speech-to-Text Transcription", font=('TkDefaultFont', 16, 'bold'))
-    title_label.grid(column=0, row=0, columnspan=4, pady=(0, 15))
+    # Title with icon
+    title_frame = ttk.Frame(mainframe, style='Modern.TFrame')
+    title_frame.grid(column=0, row=0, columnspan=3, pady=(0, 20), sticky=(tk.W, tk.E))
+    title_frame.columnconfigure(1, weight=1)
 
-    # Input file selection
+    title_label = ttk.Label(title_frame, text="🎙️ Audio Transcription Pro", style='Title.TLabel')
+    title_label.grid(column=0, row=0, sticky=tk.W)
+
+    subtitle_label = ttk.Label(title_frame, text="Professional speech-to-text transcription with AI", 
+                              font=('Segoe UI', 9), foreground='#cccccc', background='#1e1e1e')
+    subtitle_label.grid(column=0, row=1, sticky=tk.W, pady=(5, 0))
+
+    # Input file selection with modern card design
+    input_frame = ttk.LabelFrame(mainframe, text=" 📁 File Selection ", style='Card.TLabelframe', padding="15 15 15 15")
+    input_frame.grid(column=0, row=1, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15))
+    input_frame.columnconfigure(1, weight=1)
+
+    ttk.Label(input_frame, text="Audio/Video File:", style='Modern.TLabel').grid(column=0, row=0, sticky=tk.W, pady=(0, 8))
+
     input_var = tk.StringVar()
-    ttk.Label(mainframe, text="Select audio or video file:", font=('TkDefaultFont', 10)).grid(column=0, row=1, sticky=tk.W)
-    input_entry = ttk.Entry(mainframe, textvariable=input_var, width=70, font=('TkDefaultFont', 10))
-    input_entry.grid(column=1, row=1, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 10))
+    input_entry = ttk.Entry(input_frame, textvariable=input_var, font=('Segoe UI', 10))
+    input_entry.grid(column=0, row=1, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10), padx=(0, 10))
 
     def browse_input():
         filetypes = [
@@ -149,96 +122,90 @@ def launch_gui(default_outdir: str = None):
         p = filedialog.askopenfilename(title="Select audio/video file", filetypes=filetypes)
         if p:
             input_var.set(p)
+            # Update status when file is selected
+            status_label.config(text=f"📁 Selected: {os.path.basename(p)}", foreground='#4ade80')
 
-    browse_btn = ttk.Button(mainframe, text="Browse", command=browse_input)
-    browse_btn.grid(column=3, row=1, padx=(10, 0))
+    browse_btn = ttk.Button(input_frame, text="📂 Browse", command=browse_input, style='Modern.TButton')
+    browse_btn.grid(column=2, row=1, sticky=tk.E)
 
-    # Output info (fixed to Downloads)
+    # Status label
+    status_label = ttk.Label(input_frame, text="No file selected", font=('Segoe UI', 9), 
+                            foreground='#888888', background='#2d2d30')
+    status_label.grid(column=0, row=2, columnspan=3, sticky=tk.W, pady=(5, 0))
+
+    # Output info
     downloads_dir = default_outdir if default_outdir else DEFAULT_DOWNLOADS
-    output_label = ttk.Label(mainframe, text=f"Output location: {downloads_dir}", font=('TkDefaultFont', 9), foreground='#666666')
-    output_label.grid(column=0, row=2, columnspan=4, sticky=tk.W, pady=(5, 15))
+    output_frame = ttk.LabelFrame(mainframe, text=" 📍 Output Location ", style='Card.TLabelframe', padding="15 10 15 10")
+    output_frame.grid(column=0, row=2, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15))
 
-    # Settings frame
-    settings_frame = ttk.LabelFrame(mainframe, text="Settings", padding="10 10 10 10")
-    settings_frame.grid(column=0, row=3, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 10))
-    settings_frame.columnconfigure(1, weight=1)
+    output_label = ttk.Label(output_frame, text=f"💾 {downloads_dir}", style='Modern.TLabel', 
+                            font=('Segoe UI', 9), foreground='#cccccc')
+    output_label.grid(column=0, row=0, sticky=tk.W)
 
-    # Model selection
-    model_var = tk.StringVar(value="medium")
-    ttk.Label(settings_frame, text="AI Model:").grid(column=0, row=0, sticky=tk.W, padx=(0, 10))
-    model_combo = ttk.Combobox(settings_frame, textvariable=model_var, values=("medium", "large"), 
-                              state="readonly", width=20)
-    model_combo.grid(column=1, row=0, sticky=tk.W)
-    
-    # Processing selection (same row)
-    ttk.Label(settings_frame, text="Processing:").grid(column=2, row=0, sticky=tk.W, padx=(20, 10))
-    device_var = tk.StringVar(value="auto")
-    device_combo = ttk.Combobox(settings_frame, textvariable=device_var, values=("auto", "optimised", "cpu", "troubleshoot"), 
-                               state="readonly", width=15)
-    device_combo.grid(column=3, row=0, sticky=tk.W)
-    
-    # Info labels (compact)
-    model_info = ttk.Label(settings_frame, text="Medium: Good quality, faster • Large: Best quality, slower", 
-                          font=('TkDefaultFont', 8), foreground='#666666')
-    model_info.grid(column=0, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
+    # Settings info with modern card
+    settings_frame = ttk.LabelFrame(mainframe, text=" ⚙️ Configuration ", style='Card.TLabelframe', padding="15 10 15 10")
+    settings_frame.grid(column=0, row=3, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15))
 
-    processing_info = ttk.Label(settings_frame, text="Auto: Best • Optimised: GPU+CPU • Troubleshoot: Test all • CPU: CPU only", 
-                               font=('TkDefaultFont', 8), foreground='#666666')
-    processing_info.grid(column=2, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
+    settings_text = """🎯 Large AI Model (Best Quality)
+🖥️  Auto Device Detection (CUDA → DirectML → CPU)
+🚫 No VAD Segmentation (Faster for continuous speech)
+🚫 No Audio Preprocessing (Direct processing)
+🧵  Maximum CPU Threads (RAM-optimized)
+🛡️  AI Guardrails Disabled (Captures all audio)"""
 
-    # Keep temp files option
-    keep_temp_var = tk.BooleanVar(value=False)
-    temp_check = ttk.Checkbutton(settings_frame, text="Keep temporary files (for debugging)", variable=keep_temp_var)
-    temp_check.grid(column=0, row=2, columnspan=4, sticky=tk.W, pady=(5, 0))
-
-    # Quality info (more compact)
-    quality_frame = ttk.LabelFrame(mainframe, text="Quality Settings (Always Enabled)", padding="10 5 10 5")
-    quality_frame.grid(column=0, row=4, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 10))
-    
-    quality_text = "✓ Audio Preprocessing  ✓ Voice Activity Detection  ✓ Punctuation Restoration  ✓ Optimized AI Parameters"
-    quality_label = ttk.Label(quality_frame, text=quality_text, font=('TkDefaultFont', 9), foreground='#006600')
-    quality_label.grid(column=0, row=0, sticky=tk.W)
+    settings_label = tk.Text(settings_frame, height=6, wrap=tk.WORD, font=('Consolas', 9), 
+                            bg='#2d2d30', fg='#ffffff', borderwidth=0, highlightthickness=0)
+    settings_label.insert(tk.END, settings_text)
+    settings_label.config(state=tk.DISABLED)
+    settings_label.grid(column=0, row=0, sticky=(tk.W, tk.E))
 
     # Progress and Status section
-    progress_frame = ttk.LabelFrame(mainframe, text="Progress & Status", padding="10 5 10 5")
-    progress_frame.grid(column=0, row=5, columnspan=4, sticky=(tk.E, tk.W), pady=(10, 5))
+    progress_frame = ttk.LabelFrame(mainframe, text=" 📊 Progress & Status ", style='Card.TLabelframe', padding="15 15 15 15")
+    progress_frame.grid(column=0, row=4, columnspan=3, sticky='ew', pady=(10, 5))
     progress_frame.columnconfigure(1, weight=1)
-    
-    # Progress bar
-    progress_var = tk.DoubleVar()
-    progress_bar = ttk.Progressbar(progress_frame, variable=progress_var, maximum=100, length=400)
-    progress_bar.grid(column=0, row=0, columnspan=3, sticky=(tk.E, tk.W), pady=(0, 5))
-    
-    # Status labels
-    progress_label = ttk.Label(progress_frame, text="Ready to start", foreground='#666666')
-    progress_label.grid(column=0, row=1, sticky=tk.W)
-    
-    thread_label = ttk.Label(progress_frame, text="Threads: 0 active", foreground='#666666')
-    thread_label.grid(column=1, row=1, sticky=tk.E)
-    
-    time_label = ttk.Label(progress_frame, text="", foreground='#666666')
-    time_label.grid(column=2, row=1, sticky=tk.E, padx=(10, 0))
 
-    # Log area
-    log_frame = ttk.LabelFrame(mainframe, text="Progress Log", padding="5 5 5 5")
-    log_frame.grid(column=0, row=6, columnspan=4, sticky=(tk.N, tk.S, tk.E, tk.W), pady=(0, 10))
+    # Progress bar with modern styling
+    progress_var = tk.DoubleVar()
+    progress_bar = ttk.Progressbar(progress_frame, variable=progress_var, maximum=100, 
+                                  length=400, style='Horizontal.TProgressbar')
+    progress_bar.grid(column=0, row=0, columnspan=3, sticky='ew', pady=(0, 10))
+
+    # Status labels
+    progress_label = ttk.Label(progress_frame, text="Ready to start transcription", 
+                              style='Modern.TLabel', font=('Segoe UI', 10, 'bold'))
+    progress_label.grid(column=0, row=1, sticky='w')
+
+    time_label = ttk.Label(progress_frame, text="", style='Modern.TLabel', foreground='#007acc')
+    time_label.grid(column=2, row=1, sticky='e', padx=(10, 0))
+
+    # Log area with modern design
+    log_frame = ttk.LabelFrame(mainframe, text=" 📝 Activity Log ", style='Card.TLabelframe', padding="10 10 10 10")
+    log_frame.grid(column=0, row=5, columnspan=3, sticky='nsew', pady=(0, 15))
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
-    
-    log_text = tk.Text(log_frame, wrap=tk.WORD, height=10, font=('Consolas', 9))
-    log_text.grid(column=0, row=0, sticky=(tk.N, tk.S, tk.E, tk.W))
-    
+
+    log_text = tk.Text(log_frame, wrap=tk.WORD, height=8, font=('Consolas', 9), 
+                      bg='#1e1e1e', fg='#ffffff', borderwidth=0, highlightthickness=0,
+                      insertbackground='#ffffff')
+    log_text.grid(column=0, row=0, sticky='nsew')
+
     log_scroll = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=log_text.yview)
-    log_scroll.grid(column=1, row=0, sticky=(tk.N, tk.S))
+    log_scroll.grid(column=1, row=0, sticky='ns')
     log_text['yscrollcommand'] = log_scroll.set
-    log_text.configure(state=tk.DISABLED)
+    log_text.configure(state='disabled')
 
     # Add initial welcome message
-    log_text.configure(state=tk.NORMAL)
-    log_text.insert(tk.END, "Welcome to Speech-to-Text Transcription!\n")
-    log_text.insert(tk.END, "Select a file and click 'Start Transcription' to begin.\n")
-    log_text.insert(tk.END, "Output files will be saved to your Downloads folder.\n\n")
-    log_text.configure(state=tk.DISABLED)
+    log_text.configure(state='normal')
+    log_text.insert('end', "🎯 Welcome to Audio Transcription Pro!\n", "title")
+    log_text.insert('end', "Select an audio or video file and click 'Start Transcription' to begin.\n\n")
+    log_text.insert('end', "💡 Tip: For best results with continuous speech, this tool processes the entire file at once.\n\n")
+    log_text.configure(state='disabled')
+
+    # Tag configuration for colored text
+    log_text.tag_configure("title", foreground="#007acc", font=('Consolas', 9, 'bold'))
+    log_text.tag_configure("success", foreground="#4ade80")
+    log_text.tag_configure("error", foreground="#ef4444")
+    log_text.tag_configure("info", foreground="#60a5fa")
 
     q = queue.Queue()
 
@@ -261,7 +228,7 @@ def launch_gui(default_outdir: str = None):
                             # Update progress bar
                             progress_var.set(percentage)
                             progress_label.configure(text=status_text)
-                            thread_label.configure(text=f"Threads: {thread_count} active")
+                            # Thread count removed from UI
                             
                             # Optional elapsed time
                             if len(parts) >= 4:
@@ -310,21 +277,21 @@ def launch_gui(default_outdir: str = None):
                     elif "Complete" in msg and "successfully" in msg:
                         progress_var.set(100)
                         progress_label.configure(text="Transcription completed!")
-                        thread_label.configure(text="System: Ready")
+                        # System status removed from UI
                         
                 # Detect thread activity from webrtcvad warnings (indicates parallel processing)
                 elif "webrtcvad" in msg and "warning" in msg.lower():
                     # Count concurrent processes by counting warnings
                     import threading
                     active = threading.active_count()
-                    thread_label.configure(text=f"Workers: {active} processes active")
+                    # Worker count removed from UI
                 
                 # Regular log message
                 formatted_msg = format_log_message(msg)
-                log_text.configure(state=tk.NORMAL)
-                log_text.insert(tk.END, formatted_msg)
-                log_text.see(tk.END)
-                log_text.configure(state=tk.DISABLED)
+                log_text.configure(state='normal')
+                log_text.insert('end', formatted_msg)
+                log_text.see('end')
+                log_text.configure(state='disabled')
         except queue.Empty:
             pass
         except Exception as e:
@@ -381,26 +348,26 @@ def launch_gui(default_outdir: str = None):
         print("DEBUG: start_transcription_thread called", file=sys.__stderr__)
         
         inp = input_var.get().strip()
+        print(f"DEBUG: Input file path: '{inp}'", file=sys.__stderr__)
+        print(f"DEBUG: Input file exists: {os.path.isfile(inp) if inp else 'N/A'}", file=sys.__stderr__)
         
         if not inp or not os.path.isfile(inp):
-            messagebox.showerror("Input Required", "Please select a valid audio or video file.")
+            error_msg = f"Please select a valid audio or video file.\nPath: '{inp}'\nExists: {os.path.isfile(inp) if inp else False}"
+            print(f"DEBUG: Validation failed: {error_msg}", file=sys.__stderr__)
+            messagebox.showerror("Input Required", error_msg)
             return
 
-        # Clear log and show starting message
-        log_text.configure(state=tk.NORMAL)
-        log_text.delete(1.0, tk.END)
-        log_text.insert(tk.END, "Starting transcription...\n")
-        log_text.see(tk.END)
-        log_text.configure(state=tk.DISABLED)
+        print("DEBUG: Validation passed, proceeding with transcription", file=sys.__stderr__)
 
-        options = {
-            "model": model_var.get(),
-            "device": device_var.get(),
-            "keep_temp": keep_temp_var.get(),
-        }
+        # Clear log and show starting message
+        log_text.configure(state='normal')
+        log_text.delete(1.0, 'end')
+        log_text.insert('end', "Starting transcription...\n")
+        log_text.see('end')
+        log_text.configure(state='disabled')
 
         def worker():
-            import sys  # Import sys in the worker function scope
+            import sys
             try:
                 # Send initial status message
                 q.put("🔄 Initializing transcription process...\n")
@@ -410,10 +377,7 @@ def launch_gui(default_outdir: str = None):
                 sys.stdout = QueueWriter(q)
                 sys.stderr = QueueWriter(q)
                 try:
-                    # Debug: print to stderr so it doesn't interfere with stdout redirection
-                    print("DEBUG: About to call run_transcription", file=sys.__stderr__)
-                    run_transcription(inp, downloads_dir, options, q)
-                    print("DEBUG: run_transcription completed", file=sys.__stderr__)
+                    run_transcription(inp, downloads_dir, q)
                 finally:
                     sys.stdout = old_out
                     sys.stderr = old_err
@@ -424,7 +388,6 @@ def launch_gui(default_outdir: str = None):
             except Exception as e:
                 import traceback
                 error_msg = f"Worker error: {e}\n{traceback.format_exc()}"
-                print(f"DEBUG: Worker exception: {error_msg}", file=sys.__stderr__)
                 q.put(error_msg)
 
         t = threading.Thread(target=worker, daemon=True)
@@ -432,39 +395,16 @@ def launch_gui(default_outdir: str = None):
 
     # Run button
     run_btn = ttk.Button(mainframe, text="Start Transcription", command=start_transcription_thread)
-    run_btn.grid(column=1, row=7, columnspan=2, pady=(10, 0))
-
-    # Cache clear button
-    def clear_cache():
-        """Clear Whisper model cache to force fresh downloads."""
-        try:
-            import subprocess
-            result = subprocess.run([sys.executable, "clear_whisper_cache.py"], 
-                                  capture_output=True, text=True, cwd=os.getcwd())
-            if result.returncode == 0:
-                messagebox.showinfo("Cache Cleared", "Whisper model cache cleared successfully!\nNext transcription will download fresh models.")
-            else:
-                messagebox.showerror("Cache Clear Failed", f"Failed to clear cache:\n{result.stderr}")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to run cache clear script:\n{str(e)}")
-
-    cache_btn = ttk.Button(mainframe, text="Clear Model Cache", command=clear_cache)
-    cache_btn.grid(column=0, row=7, pady=(10, 0))
-    cache_btn.configure(width=15)
+    run_btn.grid(column=1, row=6, pady=(10, 0))
 
     poll_queue()
     root.mainloop()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="GUI for optimized speech-to-text transcription")
+    parser = argparse.ArgumentParser(description="Simplified GUI for speech-to-text transcription")
     parser.add_argument("--input", help="input audio/video file (if provided, runs headless)")
     parser.add_argument("--outdir", help="output folder (defaults to Downloads)")
-    parser.add_argument("--model", default="medium", help="whisper model: medium or large")
-    parser.add_argument("--keep-temp", action="store_true")
-    parser.add_argument("--device", default="auto", 
-                       choices=["auto", "optimized", "cpu"],
-                       help="Processing mode: auto (intelligent), optimized (GPU+CPU forced), cpu (CPU only)")
     args = parser.parse_args()
 
     outdir = args.outdir or DEFAULT_DOWNLOADS
@@ -472,14 +412,9 @@ def main():
     if args.input:
         # Run headless
         q = queue.Queue()
-        options = {
-            "model": args.model,
-            "device": args.device,
-            "keep_temp": args.keep_temp,
-        }
         
         def runner():
-            run_transcription(args.input, outdir, options, q)
+            run_transcription(args.input, outdir, q)
         
         t = threading.Thread(target=runner)
         t.start()
