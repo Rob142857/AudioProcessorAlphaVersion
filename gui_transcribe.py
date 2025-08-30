@@ -27,7 +27,7 @@ def run_transcription(input_file: str, outdir: str, output_queue: queue.Queue):
     """Run simplified transcription with large model and auto device detection."""
     try:
         # Import and run the simplified transcription
-        from transcribe_optimised import transcribe_file_simple_auto
+        from transcribe_aggressive import transcribe_file_simple_auto
         
         output_queue.put(f"🚀 Starting SIMPLIFIED transcription for: {os.path.basename(input_file)}\n")
         output_queue.put("Using Large model with auto device detection\n")

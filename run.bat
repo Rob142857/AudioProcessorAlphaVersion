@@ -117,12 +117,16 @@ else:
         print('⚡ CPU processing ready (works on any computer)')
 
 print()
-print('📥 Preloading Whisper medium model (1.4GB download)...')
+print('📥 Downloading Whisper Large model (3GB)...')
+print('   This is required for best transcription quality')
+print('   Download may take 5-15 minutes depending on your internet speed...')
 success, _, _ = run_command('python preload_models.py')
 if success:
-    print('✅ AI model preloaded successfully!')
+    print('✅ Large AI model downloaded and cached successfully!')
+    print('   Ready for high-quality transcription')
 else:
-    print('⚠️  Model preloading failed - will download on first use')
+    print('⚠️  Model download failed - will download on first use')
+    print('   This will delay your first transcription')
 "
 
 :launch
