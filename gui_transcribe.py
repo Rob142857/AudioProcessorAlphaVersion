@@ -24,14 +24,17 @@ DEFAULT_DOWNLOADS = os.path.normpath(os.path.join(os.path.expanduser("~"), "Down
 
 def run_transcription(input_file: str, outdir: str, options: dict, output_queue: queue.Queue):
     """Call transcription with optimized settings based on simplified options."""
+    # Initialize out_txt to prevent UnboundLocalError
+    out_txt = None
+    
     try:
         device_mode = options.get("device", "auto")
         
         if device_mode == "auto":
             # Use intelligent auto-optimization for maximum resource utilization
             from transcribe_auto import transcribe_file_auto
-            output_queue.put(f"Starting AUTO-OPTIMIZED transcription for: {input_file}\n")
-            output_queue.put("🤖 Analyzing system capabilities and optimizing resource utilization...\n")
+            output_queue.put(f"🤖 Starting AUTO-OPTIMIZED transcription for: {os.path.basename(input_file)}\n")
+            output_queue.put("🔍 Analyzing system capabilities and optimizing resource utilization...\n")
             output_queue.put("Target: 80-90% CPU/GPU utilization for maximum performance!\n")
             
             out_txt = transcribe_file_auto(input_file,
@@ -42,7 +45,7 @@ def run_transcription(input_file: str, outdir: str, options: dict, output_queue:
         elif device_mode == "optimized":
             # Use enforced CPU+GPU hybrid processing (optimised mode)
             from transcribe_aggressive import transcribe_file_aggressive
-            output_queue.put(f"Starting OPTIMIZED GPU+CPU transcription for: {input_file}\n")
+            output_queue.put(f"🚀 Starting OPTIMIZED GPU+CPU transcription for: {os.path.basename(input_file)}\n")
             output_queue.put("Using enforced hybrid processing: GPU + CPU cores working simultaneously\n")
             output_queue.put("System monitoring active - watch your Task Manager CPU/GPU usage!\n")
             
@@ -54,7 +57,7 @@ def run_transcription(input_file: str, outdir: str, options: dict, output_queue:
         elif device_mode == "cpu":
             # Use CPU-only processing with optimizations
             from transcribe import transcribe_file
-            output_queue.put(f"Starting CPU-ONLY transcription for: {input_file}\n")
+            output_queue.put(f"🖥️ Starting CPU-ONLY transcription for: {os.path.basename(input_file)}\n")
             output_queue.put("Using CPU-only processing with quality optimizations\n")
             
             out_txt = transcribe_file(input_file,
@@ -78,10 +81,17 @@ def run_transcription(input_file: str, outdir: str, options: dict, output_queue:
             
             output_queue.put(f"✓ Troubleshooting complete! Check Downloads folder for results.\n")
             output_queue.put(f"  → Multiple test files created for comparison\n")
+            
+            # For troubleshoot mode, we don't have a single out_txt file
+            out_txt = "troubleshooting_complete"
         
-        output_queue.put(f"✓ Transcription complete! Files saved to Downloads folder.\n")
-        output_queue.put(f"  → Text file: {os.path.basename(out_txt)}\n")
-        output_queue.put(f"  → Word document: {os.path.basename(out_txt.replace('.txt', '.docx'))}\n")
+        # Only show file output messages if we have actual output files
+        if out_txt and out_txt != "troubleshooting_complete":
+            output_queue.put(f"✅ Transcription complete! Files saved to Downloads folder.\n")
+            output_queue.put(f"  📄 Text file: {os.path.basename(out_txt)}\n")
+            output_queue.put(f"  📄 Word document: {os.path.basename(out_txt.replace('.txt', '.docx'))}\n")
+        elif device_mode == "troubleshoot":
+            output_queue.put(f"✅ Transcription complete! Files saved to Downloads folder.\n")
     except Exception as e:
         output_queue.put(f"✗ Transcription failed: {e}\n")
 
@@ -94,6 +104,7 @@ class QueueWriter:
 
     def write(self, msg):
         if msg:
+            # Don't use print() here as it causes infinite recursion with redirected stdout
             self.q.put(str(msg))
 
     def flush(self):
@@ -235,6 +246,7 @@ def launch_gui(default_outdir: str = None):
         try:
             while True:
                 msg = q.get_nowait()
+                # Don't use print() here to avoid recursion with redirected stdout
                 
                 # Handle special progress messages
                 if msg.startswith("PROGRESS:"):
@@ -315,6 +327,10 @@ def launch_gui(default_outdir: str = None):
                 log_text.configure(state=tk.DISABLED)
         except queue.Empty:
             pass
+        except Exception as e:
+            # Debug: print to stderr so it doesn't interfere with stdout redirection
+            import sys
+            print(f"DEBUG: poll_queue exception: {e}", file=sys.__stderr__)
         root.after(200, poll_queue)
 
     def format_log_message(msg):
@@ -360,14 +376,21 @@ def launch_gui(default_outdir: str = None):
         return formatted
 
     def start_transcription_thread():
+        # Debug: print to stderr so it doesn't interfere with stdout redirection
+        import sys
+        print("DEBUG: start_transcription_thread called", file=sys.__stderr__)
+        
         inp = input_var.get().strip()
+        
         if not inp or not os.path.isfile(inp):
             messagebox.showerror("Input Required", "Please select a valid audio or video file.")
             return
 
-        # Clear log
+        # Clear log and show starting message
         log_text.configure(state=tk.NORMAL)
         log_text.delete(1.0, tk.END)
+        log_text.insert(tk.END, "Starting transcription...\n")
+        log_text.see(tk.END)
         log_text.configure(state=tk.DISABLED)
 
         options = {
@@ -377,18 +400,32 @@ def launch_gui(default_outdir: str = None):
         }
 
         def worker():
+            import sys  # Import sys in the worker function scope
             try:
+                # Send initial status message
+                q.put("🔄 Initializing transcription process...\n")
+                
                 # Redirect prints from transcribe to the queue
                 old_out, old_err = sys.stdout, sys.stderr
                 sys.stdout = QueueWriter(q)
                 sys.stderr = QueueWriter(q)
                 try:
+                    # Debug: print to stderr so it doesn't interfere with stdout redirection
+                    print("DEBUG: About to call run_transcription", file=sys.__stderr__)
                     run_transcription(inp, downloads_dir, options, q)
+                    print("DEBUG: run_transcription completed", file=sys.__stderr__)
                 finally:
                     sys.stdout = old_out
                     sys.stderr = old_err
+                
+                # Send completion message
+                q.put("✅ Transcription process finished!\n")
+                
             except Exception as e:
-                q.put(f"Worker error: {e}\n")
+                import traceback
+                error_msg = f"Worker error: {e}\n{traceback.format_exc()}"
+                print(f"DEBUG: Worker exception: {error_msg}", file=sys.__stderr__)
+                q.put(error_msg)
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()

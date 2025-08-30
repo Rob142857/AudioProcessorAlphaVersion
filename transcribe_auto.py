@@ -57,7 +57,7 @@ def calculate_optimal_workers(system_info, target_cpu_utilization=85):
     # Determine processing strategy based on system capabilities
     if has_cuda and gpu_memory_gb >= 6.0:  # Strong GPU system
         # Use aggressive GPU+CPU hybrid for maximum performance
-        strategy = "aggressive"
+        strategy = "optimised"
         gpu_workers = min(2, max(1, int(gpu_memory_gb / 4)))  # Conservative GPU memory usage
         cpu_workers = min(cpu_cores - 4, int(cpu_cores * target_additional_load / 100))
         cpu_workers = max(4, cpu_workers)  # Minimum viable CPU workers
@@ -138,9 +138,9 @@ def transcribe_file_auto(input_path, model_name="medium", output_dir=None, targe
     print(f"   Target CPU Usage: {config['target_cpu_utilization']}%")
     
     # Route to appropriate transcription method
-    if config['strategy'] == "aggressive":
+    if config['strategy'] == "optimised":
         from transcribe_aggressive import transcribe_file_aggressive
-        print("🔥 Using AGGRESSIVE mode for maximum performance...")
+        print("🔥 Using OPTIMISED mode for maximum performance...")
         return transcribe_file_aggressive(input_path, model_name, output_dir, force_aggressive=True)
     
     elif config['strategy'] == "hybrid":

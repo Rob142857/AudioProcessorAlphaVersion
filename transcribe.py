@@ -319,7 +319,7 @@ def transcribe_file(input_path, model_name="medium", preprocess=True, keep_temp=
             print("Running VAD segmentation...")
             segments = vad_segment_times(audio_path, aggressiveness=1, frame_duration_ms=30, padding_ms=300)
             print(f"Raw segments found: {len(segments)}")
-            segments = post_process_segments(segments, min_duration=0.3, merge_gap=0.5, max_segments=200)
+            segments = post_process_segments(segments, min_duration=0.3, merge_gap=0.5, max_segments=1000)
             print(f"Segments after post-processing: {len(segments)}")
             seg_files = []
             for idx, (s, e) in enumerate(segments):
@@ -829,7 +829,7 @@ def post_process_segments_lecture(segments, min_duration=0.1, merge_gap=1.0, max
     return filtered
 
 
-def post_process_segments(segments, min_duration=0.5, merge_gap=0.3, max_segments=200):
+def post_process_segments(segments, min_duration=0.5, merge_gap=0.3, max_segments=1000):
     """Merge nearby segments, drop very short ones, and cap total segments.
     segments: list of (start,end) tuples sorted by start
     """
@@ -850,12 +850,43 @@ def post_process_segments(segments, min_duration=0.5, merge_gap=0.3, max_segment
     for s, e in merged:
         if (e - s) >= min_duration:
             filtered.append((s, e))
-    # cap number of segments
+    # cap number of segments - use merging instead of dropping for better coverage
     if len(filtered) > max_segments:
-        # keep longest segments
-        filtered = sorted(filtered, key=lambda t: t[1]-t[0], reverse=True)[:max_segments]
-        filtered = sorted(filtered, key=lambda t: t[0])
-    return filtered
+        print(f"⚠️  Found {len(filtered)} segments, merging to reduce to {max_segments}...")
+        # Instead of dropping segments, merge smaller ones together
+        # Sort by duration (shortest first) and merge adjacent segments
+        filtered.sort(key=lambda x: x[1] - x[0])  # Sort by duration ascending
+
+        # Keep the longest segments as-is, merge the shortest ones
+        keep_count = min(max_segments, len(filtered) // 2)  # Keep at least half
+        longest_segments = filtered[-keep_count:]  # Keep longest segments
+        segments_to_merge = filtered[:-keep_count]  # Shortest segments to merge
+
+        # Merge shortest segments by combining adjacent ones
+        merged_short = []
+        i = 0
+        while i < len(segments_to_merge):
+            current = list(segments_to_merge[i])
+            # Try to merge with next segment if they're close
+            if i + 1 < len(segments_to_merge):
+                next_seg = segments_to_merge[i + 1]
+                if next_seg[0] - current[1] <= merge_gap * 2:  # More lenient gap for merging
+                    current[1] = max(current[1], next_seg[1])
+                    i += 2  # Skip next segment since we merged it
+                else:
+                    i += 1
+            else:
+                i += 1
+            merged_short.append(tuple(current))
+
+        # Combine longest segments with merged short segments
+        final_segments = longest_segments + merged_short
+        final_segments.sort(key=lambda x: x[0])  # Sort by start time
+
+        print(f"✅ Merged to {len(final_segments)} segments (kept {len(longest_segments)} longest, merged {len(merged_short)} from {len(segments_to_merge)} short segments)")
+        return final_segments
+    else:
+        return filtered
 
 
 def transcribe_lecture(input_path, model_name="medium", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", punctuate=True, output_dir=None):

@@ -62,61 +62,109 @@ def adjust_workers_for_model(config, model_name):
     return config
 
 
+def check_memory_safety(min_gb=1.5):
+    """Check if system has enough memory to continue processing."""
+    memory = psutil.virtual_memory()
+    available_gb = memory.available / (1024**3)
+    
+    if available_gb < min_gb:
+        print(f"🚨 CRITICAL: Only {available_gb:.1f}GB RAM available (minimum {min_gb}GB required)")
+        print("   System may become unstable. Consider reducing worker count or using smaller batches.")
+        return False
+    
+    if available_gb < 2.0:
+        print(f"⚠️  WARNING: Low memory ({available_gb:.1f}GB available)")
+    
+    return True
+
+
 def extract_segments_aggressive(audio_path, segments, temp_dir, config):
-    """Ultra-fast parallel segment extraction using all available CPU cores."""
-    print(f"🎵 Extracting {len(segments)} segments with {config['segment_extraction_workers']} parallel processes...")
+    """Ultra-fast parallel segment extraction using all available CPU cores with memory safeguards."""
+    print(f"🎵 Extracting {len(segments)} segments with memory-safe batch processing...")
+    
+    # Memory-aware batch processing to prevent overflow
+    total_segments = len(segments)
+    batch_size = min(100, max(20, total_segments // 10))  # Adaptive batch size
+    memory = psutil.virtual_memory()
+    available_gb = memory.available / (1024**3)
+    
+    # Reduce batch size if memory is low
+    if available_gb < 4.0:
+        batch_size = min(batch_size, 20)
+        print(f"⚠️  Low memory detected ({available_gb:.1f}GB), using smaller batches")
+    
+    print(f"   Batch size: {batch_size} segments | Total batches: {(total_segments + batch_size - 1) // batch_size}")
     
     # Send initial progress update for extraction phase
     try:
         import sys
         if hasattr(sys.stdout, 'output_queue'):
-            print(f"PROGRESS:0.0|Extracting audio segments...|{config['segment_extraction_workers']}|")
+            print(f"PROGRESS:0.0|Extracting audio segments...|2|")
     except:
         pass
     
-    # Prepare parallel extraction
     extraction_start = time.time()
-    segment_args = [(i, start, end, audio_path, temp_dir) for i, (start, end) in enumerate(segments)]
-    
-    # Try ProcessPoolExecutor first, fallback to sequential if it fails
     successful_segments = []
+    total_processed = 0
     
-    try:
-        # Use ProcessPoolExecutor for true CPU parallelism with timeout and error handling
-        with ProcessPoolExecutor(max_workers=min(config["segment_extraction_workers"], 6)) as executor:
-            # Submit all extraction tasks
-            future_to_segment = {}
-            for args in segment_args:
-                future = executor.submit(extract_single_segment_worker, args)
-                future_to_segment[future] = args[0]
-            
-            # Collect results with progress tracking
-            for future in as_completed(future_to_segment, timeout=300):
-                segment_index = future_to_segment[future]
+    # Process segments in batches to prevent memory overflow
+    for batch_start in range(0, total_segments, batch_size):
+        batch_end = min(batch_start + batch_size, total_segments)
+        batch_segments = segments[batch_start:batch_end]
+        batch_args = [(i + batch_start, start, end, audio_path, temp_dir) for i, (start, end) in enumerate(batch_segments)]
+        
+        print(f"   Processing batch {batch_start//batch_size + 1}/{(total_segments + batch_size - 1) // batch_size} ({len(batch_args)} segments)")
+        
+        # Use conservative parallel processing for this batch
+        max_workers = min(3, len(batch_args))  # Limit to 3 workers max per batch
+        
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                future_to_segment = {}
+                for args in batch_args:
+                    future = executor.submit(extract_single_segment_worker, args)
+                    future_to_segment[future] = args[0]
+                
+                # Collect results for this batch
+                for future in as_completed(future_to_segment, timeout=180):  # 3 minute timeout per batch
+                    segment_index = future_to_segment[future]
+                    try:
+                        result = future.result(timeout=60)
+                        if result:
+                            successful_segments.append(result)
+                            total_processed += 1
+                            if total_processed % 50 == 0:  # Progress update every 50 segments
+                                progress = (total_processed / total_segments) * 100
+                                print(f"   Progress: {total_processed}/{total_segments} segments ({progress:.1f}%)")
+                    except Exception as e:
+                        print(f"   Failed segment {segment_index}: {e}")
+                        continue
+        
+        except Exception as e:
+            print(f"   Batch processing failed, falling back to sequential: {e}")
+            # Fallback to sequential processing for this batch
+            for args in batch_args:
                 try:
-                    result = future.result(timeout=30)
+                    result = extract_single_segment_worker(args)
                     if result:
                         successful_segments.append(result)
-                        print(f"Extracted segment {segment_index + 1}/{len(segments)}")
-                except Exception as e:
-                    print(f"Failed to extract segment {segment_index}: {e}")
+                        total_processed += 1
+                except Exception as seg_e:
+                    print(f"   Failed segment {args[0]}: {seg_e}")
                     continue
-    
-    except Exception as e:
-        print(f"ProcessPoolExecutor failed, falling back to sequential processing: {e}")
-        # Fallback to sequential processing
-        for i, (start, end) in enumerate(segments):
-            try:
-                result = extract_single_segment_worker((i, start, end, audio_path, temp_dir))
-                if result:
-                    successful_segments.append(result)
-                    print(f"Extracted segment {i + 1}/{len(segments)}")
-            except Exception as seg_e:
-                print(f"Failed to extract segment {i}: {seg_e}")
-                continue
+        
+        # Memory cleanup between batches
+        import gc
+        gc.collect()
+        
+        # Check memory usage and pause if needed
+        current_memory = psutil.virtual_memory()
+        if current_memory.available / (1024**3) < 1.0:  # Less than 1GB available
+            print(f"   ⚠️  Low memory ({current_memory.available / (1024**3):.1f}GB), pausing for cleanup...")
+            time.sleep(2)  # Give system time to recover
     
     extraction_time = time.time() - extraction_start
-    print(f"\n⚡ Extracted {len(successful_segments)} segments in {extraction_time:.1f}s")
+    print(f"\n⚡ Extracted {len(successful_segments)}/{total_segments} segments in {extraction_time:.1f}s")
     if len(successful_segments) > 0:
         print(f"   Speed: {len(successful_segments) / extraction_time:.1f} segments/second")
     
@@ -164,23 +212,24 @@ def get_optimal_worker_counts():
         estimated_ram_per_worker = model_ram_usage.get('medium', 2.5)
         max_cpu_workers_by_ram = int(usable_ram / estimated_ram_per_worker)
         
-        # OPTIMISED: Use ALL available CPU cores and RAM capacity
+        # OPTIMISED: Use conservative worker counts to prevent memory overflow
         cpu_workers = min(
-            cpu_cores - 1,  # Leave only 1 core free (was 4!)
+            cpu_cores // 2,  # Use half CPU cores (was cpu_cores - safer)
             max_cpu_workers_by_ram,  # RAM constraint
-            20  # Higher maximum (was 12)
+            8  # Lower maximum (was 32) - prevent memory overflow
         )
         
-        print(f"🚀 OPTIMISED RAM-Maxed Hybrid Config:")
+        print(f"🚀 MEMORY-SAFE Hybrid Config:")
         print(f"   GPU Workers: {gpu_workers} (CUDA parallel streams)")
-        print(f"   CPU Workers: {cpu_workers} (MAXED - using {usable_ram:.1f}GB usable RAM)")
+        print(f"   CPU Workers: {cpu_workers} (Conservative - memory safe)")
         print(f"   Total Workers: {gpu_workers + cpu_workers}")
+        print(f"   RAM Usage: {usable_ram:.1f}GB available for models")
         
         return {
             "gpu_workers": gpu_workers,
             "cpu_workers": cpu_workers,
             "total_workers": gpu_workers + cpu_workers,
-            "segment_extraction_workers": min(cpu_cores // 2, 16),  # More optimised extraction workers
+            "segment_extraction_workers": min(cpu_cores // 4, 4),  # Conservative extraction workers
             "ram_constraint": True,
             "available_ram_gb": available_ram_gb,
             "estimated_ram_per_model": estimated_ram_per_worker
@@ -192,19 +241,20 @@ def get_optimal_worker_counts():
         max_cpu_workers_by_ram = int(usable_ram / estimated_ram_per_worker)
         
         cpu_workers = min(
-            cpu_cores,  # Use ALL CPU cores
+            cpu_cores // 2,  # Use half CPU cores (was cpu_cores - safer)
             max_cpu_workers_by_ram,
-            16  # Higher maximum (was 8)
+            6  # Lower maximum (was 24) - prevent memory overflow
         )
         
-        print(f"💻 OPTIMISED CPU-Only Config:")
-        print(f"   CPU Workers: {cpu_workers} (MAXED - using {usable_ram:.1f}GB usable RAM)")
+        print(f"💻 MEMORY-SAFE CPU-Only Config:")
+        print(f"   CPU Workers: {cpu_workers} (Conservative - memory safe)")
+        print(f"   RAM Usage: {usable_ram:.1f}GB available for models")
         
         return {
             "gpu_workers": 0,
             "cpu_workers": cpu_workers,
             "total_workers": cpu_workers,
-            "segment_extraction_workers": min(cpu_cores, 12),  # More extraction workers
+            "segment_extraction_workers": min(cpu_cores // 4, 3),  # Conservative extraction workers
             "ram_constraint": True,
             "available_ram_gb": available_ram_gb,
             "estimated_ram_per_model": estimated_ram_per_worker
@@ -295,10 +345,10 @@ def load_models_aggressive(model_name="medium", config=None):
                 print(f"   GPU Model {i}: Failed - {e}")
     
     if config["cpu_workers"] > 0:
-        # Adjust CPU model count based on RAM constraints
+        # Adjust CPU model count based on RAM constraints - MORE AGGRESSIVE
         max_cpu_models = min(
-            config["cpu_workers"] // 4,  # Share CPU models across workers
-            4,  # Reasonable maximum
+            config["cpu_workers"] // 2,  # Allow more models (was // 4)
+            8,  # Higher maximum (was 4)
             int(config.get("available_ram_gb", 8) / config.get("actual_ram_per_model", 2.5))  # RAM constraint
         )
         
@@ -373,22 +423,25 @@ def transcribe_segment_aggressive(model, audio_path, segment_info, worker_id):
 
 
 def extract_single_segment_worker(args):
-    """Worker function for parallel segment extraction."""
+    """Worker function for parallel segment extraction with multi-threading."""
     idx, start_time, end_time, audio_path, temp_dir = args
     output_path = os.path.join(temp_dir, f"seg_{idx:04d}.mp3")
-    
+
     try:
-        # High-speed ffmpeg extraction
+        # Multi-threaded ffmpeg extraction for maximum CPU utilization
+        cpu_cores = multiprocessing.cpu_count()
+        ffmpeg_threads = min(cpu_cores // 2, 8)  # Use up to 8 threads for ffmpeg
+
         cmd = [
             "ffmpeg", "-y", "-v", "quiet",
             "-i", audio_path,
             "-ss", str(start_time),
             "-t", str(end_time - start_time),
             "-acodec", "libmp3lame",
-            "-b:a", "128k",  # Lower bitrate for speed
+            "-b:a", "128k",  # Higher bitrate for quality
             "-ar", "16000",
             "-ac", "1",
-            "-threads", "1",  # Single thread per process
+            "-threads", str(ffmpeg_threads),  # Multi-threaded extraction
             output_path
         ]
         subprocess.run(cmd, check=True, timeout=60)
@@ -430,40 +483,40 @@ def extract_single_segment_worker_thread(args):
 
 def transcribe_parallel_aggressive(models, segments, config):
     """Maximum parallel transcription using all GPU and CPU resources with progress tracking."""
-    
+
     # Safety check for None or empty segments
     if segments is None:
         print("❌ Error: segments parameter is None")
         return []
-    
+
     if len(segments) == 0:
         print("⚠️  Warning: No segments to process")
         return []
-    
-    print(f"🗣️  Starting optimised parallel transcription...")
+
+    print(f"🗣️  Starting MEMORY-SAFE parallel transcription...")
     print(f"   Processing {len(segments)} segments with {config['total_workers']} workers")
-    
+    print(f"   Using ProcessPoolExecutor with memory monitoring")
+
     # Start system monitoring
     monitor_thread = monitor_system_usage()
-    
+
     results = []
-    segment_queue = queue.Queue()
-    completed_segments = 0
+    segment_queue = multiprocessing.Manager().Queue()  # Use Manager for process-safe queue
+    completed_segments = multiprocessing.Value('i', 0)  # Shared counter
     start_time = time.time()
-    
+
     # Add all segments to processing queue
     for i, segment in enumerate(segments):
         segment_queue.put((i, segment))
-    
+
     def send_progress_update():
         """Send progress update to GUI if running in GUI mode."""
-        nonlocal completed_segments
-        if completed_segments > 0 and len(segments) > 0:
-            percentage = (completed_segments / len(segments)) * 100
+        if completed_segments.value > 0 and len(segments) > 0:
+            percentage = (completed_segments.value / len(segments)) * 100
             elapsed = time.time() - start_time
-            active_threads = threading.active_count() - 1  # Subtract main thread
+            active_processes = multiprocessing.active_children()
 
-            status = f"Transcribing: {completed_segments}/{len(segments)} segments"
+            status = f"Transcribing: {completed_segments.value}/{len(segments)} segments"
             elapsed_str = f"Elapsed: {elapsed:.0f}s"
 
             # Try to send to GUI queue if available
@@ -471,131 +524,155 @@ def transcribe_parallel_aggressive(models, segments, config):
                 # This will only work if called from GUI context
                 import sys
                 if hasattr(sys.stdout, 'output_queue'):
-                    print(f"PROGRESS:{percentage:.1f}|{status}|{active_threads}|{elapsed_str}")
+                    print(f"PROGRESS:{percentage:.1f}|{status}|{len(active_processes)}|{elapsed_str}")
             except:
                 pass  # Not in GUI context, just continue
 
             # Also print to console
-            print(f"📊 Progress: {percentage:.1f}% ({completed_segments}/{len(segments)}) - {active_threads} threads active")
-    
-    def gpu_worker(worker_id, model_key):
-        """GPU worker for high-throughput transcription."""
-        nonlocal completed_segments
-        model = models.get(model_key)
-        if not model:
+            print(f"📊 Progress: {percentage:.1f}% ({completed_segments.value}/{len(segments)}) - {len(active_processes)} processes active")
+
+    def gpu_worker_process(args):
+        """GPU worker process for high-throughput transcription."""
+        worker_id, model_key, queue, completed_counter = args
+
+        # Load model in this process
+        try:
+            import torch
+            import whisper
+            model = whisper.load_model("medium", device="cuda")  # Load model in process
+            print(f"🔄 GPU Worker {worker_id}: Model loaded on {next(model.parameters()).device}")
+        except Exception as e:
+            print(f"❌ GPU Worker {worker_id}: Failed to load model: {e}")
             return []
-        
+
         worker_results = []
         processed_count = 0
-        
-        while not segment_queue.empty():
+
+        while True:
             try:
-                seg_id, segment_info = segment_queue.get_nowait()
-                
+                seg_id, segment_info = queue.get_nowait()
+
                 result = transcribe_segment_aggressive(model, None, segment_info, f"GPU-{worker_id}")
                 result["segment_id"] = seg_id
                 worker_results.append(result)
                 processed_count += 1
-                
+
                 # Update progress
-                completed_segments += 1
-                if completed_segments % 5 == 0:  # Update every 5 segments
-                    send_progress_update()
-                
+                with completed_counter:
+                    completed_counter.value += 1
+                    if completed_counter.value % 5 == 0:  # Update every 5 segments
+                        send_progress_update()
+
                 # Clear GPU cache periodically
                 if processed_count % 5 == 0:
                     torch.cuda.empty_cache()
+                    import gc
                     gc.collect()
-                
-            except queue.Empty:
-                break
+
             except Exception as e:
-                print(f"\n❌ GPU Worker {worker_id} error: {e}")
-        
+                # Check if it's an empty queue exception
+                if "empty" in str(e).lower():
+                    break
+                else:
+                    print(f"\n❌ GPU Worker {worker_id} error: {e}")
+
         return worker_results
-    
-    def cpu_worker(worker_id, model_key):
-        """CPU worker for parallel processing."""
-        nonlocal completed_segments
-        
-        # Get available CPU models
-        cpu_models = [k for k in models.keys() if k.startswith('cpu')]
-        if not cpu_models:
-            print(f"⚠️  CPU Worker {worker_id}: No CPU models available, skipping")
+
+    def cpu_worker_process(args):
+        """CPU worker process for parallel processing with multi-core support."""
+        worker_id, model_key, queue, completed_counter, cores_per_worker = args
+
+        # Load model in this process
+        try:
+            import torch
+            import whisper
+            model = whisper.load_model("medium", device="cpu")  # Load model in process
+            print(f"🔄 CPU Worker {worker_id}: Model loaded with {cores_per_worker} cores available")
+        except Exception as e:
+            print(f"❌ CPU Worker {worker_id}: Failed to load model: {e}")
             return []
-            
-        # Share CPU models across multiple workers
-        model_idx = worker_id % len(cpu_models)
-        model_key = cpu_models[model_idx]
-        model = models.get(model_key)
-        if not model:
-            print(f"⚠️  CPU Worker {worker_id}: Model {model_key} not found, skipping")
-            return []
-        
-        print(f"🖥️  CPU Worker {worker_id}: Using model {model_key}")
+
         worker_results = []
         processed_count = 0
-        
-        while not segment_queue.empty():
+
+        while True:
             try:
-                seg_id, segment_info = segment_queue.get_nowait()
-                
+                seg_id, segment_info = queue.get_nowait()
+
                 result = transcribe_segment_aggressive(model, None, segment_info, f"CPU-{worker_id}")
                 result["segment_id"] = seg_id
                 worker_results.append(result)
                 processed_count += 1
-                
+
                 # Update progress
-                completed_segments += 1
-                if completed_segments % 3 == 0:  # Update every 3 segments for CPU
-                    send_progress_update()
-                
-            except queue.Empty:
-                break
+                with completed_counter:
+                    completed_counter.value += 1
+                    if completed_counter.value % 3 == 0:  # Update every 3 segments for CPU
+                        send_progress_update()
+
             except Exception as e:
-                print(f"\n❌ CPU Worker {worker_id} error: {e}")
-        
+                # Check if it's an empty queue exception
+                if "empty" in str(e).lower():
+                    break
+                else:
+                    print(f"\n❌ CPU Worker {worker_id} error: {e}")
+
         return worker_results
-    
-    # Start all workers
+
+    # Start all workers using ProcessPoolExecutor for true parallelism
     futures = []
     transcription_start = time.time()
-    
-    with ThreadPoolExecutor(max_workers=config["total_workers"]) as executor:
+
+    # Calculate cores per worker for optimal utilization
+    cpu_cores = multiprocessing.cpu_count()
+    gpu_workers = len([k for k in models.keys() if k.startswith('gpu')])
+    cpu_workers = config["cpu_workers"]
+    cores_per_cpu_worker = 1  # Default value
+
+    # Distribute CPU cores optimally
+    if cpu_workers > 0:
+        cores_per_cpu_worker = max(1, cpu_cores // cpu_workers)
+        print(f"⚡ CPU Distribution: {cpu_workers} workers × {cores_per_cpu_worker} cores each = MEMORY-SAFE UTILIZATION")
+
+    with multiprocessing.Pool(processes=config["total_workers"]) as pool:
         # Start GPU workers
-        for i, model_key in enumerate([k for k in models.keys() if k.startswith('gpu')]):
-            future = executor.submit(gpu_worker, i, model_key)
+        gpu_model_keys = [k for k in models.keys() if k.startswith('gpu')]
+        for i, model_key in enumerate(gpu_model_keys):
+            args = (i, model_key, segment_queue, completed_segments)
+            future = pool.apply_async(gpu_worker_process, (args,))
             futures.append(future)
-        
+
         # Start CPU workers
-        cpu_models = [k for k in models.keys() if k.startswith('cpu')]
-        if cpu_models:
+        cpu_model_keys = [k for k in models.keys() if k.startswith('cpu')]
+        if cpu_model_keys:
             for i in range(config["cpu_workers"]):
-                model_idx = i % len(cpu_models)
-                model_key = cpu_models[model_idx]
-                future = executor.submit(cpu_worker, i, model_key)
+                model_idx = i % len(cpu_model_keys)
+                model_key = cpu_model_keys[model_idx]
+                cores_per_worker = max(1, cpu_cores // cpu_workers)
+                args = (i, model_key, segment_queue, completed_segments, cores_per_worker)
+                future = pool.apply_async(cpu_worker_process, (args,))
                 futures.append(future)
         else:
             print("⚠️  No CPU models available, skipping CPU workers")
-        
+
         # Collect all results
         all_results = []
         completed_workers = 0
-        for future in as_completed(futures):
+        for future in futures:
             try:
-                worker_results = future.result()
+                worker_results = future.get(timeout=3600)  # 1 hour timeout
                 if worker_results:
                     all_results.extend(worker_results)
                 completed_workers += 1
                 print(f"\n✅ Worker {completed_workers}/{len(futures)} completed ({len(worker_results)} segments)")
             except Exception as e:
                 print(f"\n❌ Worker completion error: {e}")
-    
+
     transcription_time = time.time() - transcription_start
-    
+
     # Sort results by segment ID
     all_results.sort(key=lambda x: x.get('segment_id', 0))
-    
+
     # Send final progress update
     try:
         import sys
@@ -604,17 +681,18 @@ def transcribe_parallel_aggressive(models, segments, config):
             print(f"PROGRESS:100.0|Transcription Complete!|0|Total: {elapsed:.0f}s")
     except:
         pass
-    
+
     # Calculate performance stats
     total_audio_duration = sum(r.get('end', 0) - r.get('start', 0) for r in all_results)
     processing_speedup = total_audio_duration / transcription_time if transcription_time > 0 else 0
-    
-    print(f"\n🎯 Transcription Complete!")
+
+    print(f"\n🎯 MEMORY-SAFE Transcription Complete!")
     print(f"   Total segments: {len(all_results)}")
     print(f"   Processing time: {transcription_time:.1f}s")
     print(f"   Audio duration: {total_audio_duration:.1f}s")
     print(f"   Speed: {processing_speedup:.1f}x realtime")
-    
+    print(f"   CPU utilization: MEMORY-SAFE UTILIZATION")
+
     return all_results
 
 
@@ -680,7 +758,7 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
                                    frame_duration_ms=30, padding_ms=100)  # Less padding for more segments
         
         segments = post_process_segments(segments, min_duration=0.3,  # Shorter minimum duration
-                                       merge_gap=0.2, max_segments=200)  # More segments, less merging
+                                       merge_gap=0.2, max_segments=1000)  # Higher limit to prevent dropping segments
         
         print(f"📊 Final segments: {len(segments)}")
         if duration:

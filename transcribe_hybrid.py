@@ -264,7 +264,7 @@ def transcribe_file_hybrid(input_path, model_name="medium", device_preference="a
         print(f"Raw segments found: {len(segments)}")
         
         segments = post_process_segments(segments, min_duration=0.6, 
-                                       merge_gap=0.35, max_segments=120)
+                                       merge_gap=0.35, max_segments=1000)  # Higher limit to prevent dropping segments
         print(f"Segments after post-processing: {len(segments)}")
         
         if len(segments) > 1:
