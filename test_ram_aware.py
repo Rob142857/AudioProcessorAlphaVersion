@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test the RAM-aware model loading functionality."""
 
-from transcribe_aggressive import get_optimal_worker_counts, adjust_workers_for_model
+from transcribe_optimised import get_optimal_worker_counts, adjust_workers_for_model
 
 def test_ram_awareness():
     """Test RAM-aware worker calculations."""

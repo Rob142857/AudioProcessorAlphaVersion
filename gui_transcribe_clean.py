@@ -41,7 +41,7 @@ def run_transcription(input_file: str, outdir: str, options: dict, output_queue:
                                          
         elif device_mode == "optimized":
             # Use enforced CPU+GPU hybrid processing (optimised mode)
-            from transcribe_aggressive import transcribe_file_aggressive
+            from transcribe_optimised import transcribe_file_aggressive
             output_queue.put(f"Starting OPTIMIZED GPU+CPU transcription for: {input_file}\n")
             output_queue.put("Using enforced hybrid processing: GPU + CPU cores working simultaneously\n")
             output_queue.put("System monitoring active - watch your Task Manager CPU/GPU usage!\n")

@@ -139,7 +139,7 @@ def transcribe_file_auto(input_path, model_name="medium", output_dir=None, targe
     
     # Route to appropriate transcription method
     if config['strategy'] == "optimised":
-        from transcribe_aggressive import transcribe_file_aggressive
+        from transcribe_optimised import transcribe_file_aggressive
         print("🔥 Using OPTIMISED mode for maximum performance...")
         return transcribe_file_aggressive(input_path, model_name, output_dir, force_aggressive=True)
     

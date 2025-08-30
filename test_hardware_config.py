@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test script for hardware configuration."""
 
-from transcribe_aggressive import get_maximum_hardware_config
+from transcribe_optimised import get_maximum_hardware_config
 
 def main():
     try:

@@ -1,6 +1,6 @@
 import sys
 sys.path.append('.')
-from transcribe_aggressive import transcribe_file_aggressive
+from transcribe_optimised import transcribe_file_aggressive
 
 # Test the actual transcription process
 input_path = r'C:\Windows\Media\tada.wav'
