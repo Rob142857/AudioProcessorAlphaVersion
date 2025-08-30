@@ -286,9 +286,17 @@ def transcribe_file_hybrid(input_path, model_name="medium", device_preference="a
             result = transcribe_segment_optimized(models['primary'], audio_path)
             full_text = result.get("text", "")
         
-        # Post-processing
-        if not full_text.strip():
+        # Check if we have meaningful content (not just punctuation or single characters)
+        stripped_text = full_text.strip()
+        if not stripped_text:
             print("⚠️  No text transcribed!")
+            full_text = "[No speech detected]"
+        elif stripped_text in ['.', '!', '?', ',', ';', ':', '-', '_', '(', ')', '[', ']', '{', '}', '"', "'"]:
+            print("⚠️  Only punctuation detected!")
+            full_text = "[No speech detected]"
+        elif len(stripped_text.replace('.', '').replace('!', '').replace('?', '').replace(',', '').replace(';', '').replace(':', '').strip()) == 0:
+            # If text contains only punctuation, treat as no speech
+            print("⚠️  Only punctuation detected!")
             full_text = "[No speech detected]"
         
         # Apply punctuation

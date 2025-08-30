@@ -387,17 +387,17 @@ def transcribe_segment_aggressive(model, audio_path, segment_info, worker_id):
     segment_path, seg_start, seg_end = segment_info
     
     try:
-        # Optimised Whisper parameters
+        # Optimised Whisper parameters for better speech detection
         result = model.transcribe(
             segment_path,
             language=None,
-            compression_ratio_threshold=float('inf'),  # Bypass content filtering
-            logprob_threshold=-1.0,                    # Accept all confidence levels
-            no_speech_threshold=0.05,                  # Very sensitive speech detection
-            condition_on_previous_text=False,          # No context dependency
-            temperature=0.0,                           # Deterministic
-            beam_size=5,                              # Higher quality beam search
-            patience=1.0                              # More thorough processing
+            compression_ratio_threshold=2.4,  # Less restrictive content filtering
+            logprob_threshold=-2.0,           # More lenient confidence threshold
+            no_speech_threshold=0.3,          # Less sensitive speech detection (was 0.05)
+            condition_on_previous_text=False, # No context dependency
+            temperature=0.0,                  # Deterministic
+            beam_size=5,                     # Higher quality beam search
+            patience=2.0                     # More thorough processing
         )
         
         text = result.get("text", "").strip()
@@ -481,7 +481,7 @@ def extract_single_segment_worker_thread(args):
         return None
 
 
-def transcribe_parallel_aggressive(models, segments, config):
+def transcribe_parallel_aggressive(models, segment_files, segments, config, model_name="medium"):
     """Maximum parallel transcription using all GPU and CPU resources with progress tracking."""
 
     # Safety check for None or empty segments
@@ -506,8 +506,9 @@ def transcribe_parallel_aggressive(models, segments, config):
     start_time = time.time()
 
     # Add all segments to processing queue
-    for i, segment in enumerate(segments):
-        segment_queue.put((i, segment))
+    for i, segment_file in enumerate(segment_files):
+        orig_start, orig_end = segments[i]
+        segment_queue.put((i, (segment_file, 0, orig_end - orig_start)))
 
     def send_progress_update():
         """Send progress update to GUI if running in GUI mode."""
@@ -531,20 +532,19 @@ def transcribe_parallel_aggressive(models, segments, config):
             # Also print to console
             print(f"📊 Progress: {percentage:.1f}% ({completed_segments.value}/{len(segments)}) - {len(active_processes)} processes active")
 
-    def gpu_worker_process(args):
-        """GPU worker process for high-throughput transcription."""
-        worker_id, model_key, queue, completed_counter = args
+def gpu_worker_process(args):
+    """GPU worker process for high-throughput transcription."""
+    worker_id, model_key, queue, completed_counter, model_name = args
 
-        # Load model in this process
-        try:
-            import torch
-            import whisper
-            model = whisper.load_model("medium", device="cuda")  # Load model in process
-            print(f"🔄 GPU Worker {worker_id}: Model loaded on {next(model.parameters()).device}")
-        except Exception as e:
-            print(f"❌ GPU Worker {worker_id}: Failed to load model: {e}")
-            return []
-
+    # Load model in this process
+    try:
+        import torch
+        import whisper
+        model = whisper.load_model(model_name, device="cuda")  # Use actual model name
+        print(f"🔄 GPU Worker {worker_id}: Model loaded on {next(model.parameters()).device}")
+    except Exception as e:
+        print(f"❌ GPU Worker {worker_id}: Failed to load model: {e}")
+        return []
         worker_results = []
         processed_count = 0
 
@@ -578,20 +578,19 @@ def transcribe_parallel_aggressive(models, segments, config):
 
         return worker_results
 
-    def cpu_worker_process(args):
-        """CPU worker process for parallel processing with multi-core support."""
-        worker_id, model_key, queue, completed_counter, cores_per_worker = args
+def cpu_worker_process(args):
+    """CPU worker process for parallel processing with multi-core support."""
+    worker_id, model_key, queue, completed_counter, cores_per_worker, model_name = args
 
-        # Load model in this process
-        try:
-            import torch
-            import whisper
-            model = whisper.load_model("medium", device="cpu")  # Load model in process
-            print(f"🔄 CPU Worker {worker_id}: Model loaded with {cores_per_worker} cores available")
-        except Exception as e:
-            print(f"❌ CPU Worker {worker_id}: Failed to load model: {e}")
-            return []
-
+    # Load model in this process
+    try:
+        import torch
+        import whisper
+        model = whisper.load_model(model_name, device="cpu")  # Use actual model name
+        print(f"🔄 CPU Worker {worker_id}: Model loaded with {cores_per_worker} cores available")
+    except Exception as e:
+        print(f"❌ CPU Worker {worker_id}: Failed to load model: {e}")
+        return []
         worker_results = []
         processed_count = 0
 
@@ -638,7 +637,7 @@ def transcribe_parallel_aggressive(models, segments, config):
         # Start GPU workers
         gpu_model_keys = [k for k in models.keys() if k.startswith('gpu')]
         for i, model_key in enumerate(gpu_model_keys):
-            args = (i, model_key, segment_queue, completed_segments)
+            args = (i, model_key, segment_queue, completed_segments, model_name)
             future = pool.apply_async(gpu_worker_process, (args,))
             futures.append(future)
 
@@ -649,7 +648,7 @@ def transcribe_parallel_aggressive(models, segments, config):
                 model_idx = i % len(cpu_model_keys)
                 model_key = cpu_model_keys[model_idx]
                 cores_per_worker = max(1, cpu_cores // cpu_workers)
-                args = (i, model_key, segment_queue, completed_segments, cores_per_worker)
+                args = (i, model_key, segment_queue, completed_segments, cores_per_worker, model_name)
                 future = pool.apply_async(cpu_worker_process, (args,))
                 futures.append(future)
         else:
@@ -752,17 +751,21 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
             raise Exception("Failed to load any models!")
         print()  # Add spacing after model loading
         
-        # VAD segmentation with optimised settings
-        print("✂️  Running optimised VAD segmentation...")
-        segments = vad_segment_times(audio_path, aggressiveness=3,  # More optimised
-                                   frame_duration_ms=30, padding_ms=100)  # Less padding for more segments
+        # VAD segmentation with LESS aggressive settings for better speech detection
+        print("✂️  Running speech-sensitive VAD segmentation...")
+        segments = vad_segment_times(audio_path, aggressiveness=1,  # Less aggressive (was 3)
+                                   frame_duration_ms=30, padding_ms=200)  # More padding for context
         
-        segments = post_process_segments(segments, min_duration=0.3,  # Shorter minimum duration
-                                       merge_gap=0.2, max_segments=1000)  # Higher limit to prevent dropping segments
+        segments = post_process_segments(segments, min_duration=0.5,  # Longer minimum duration
+                                       merge_gap=0.5, max_segments=1000)  # More merging to preserve speech
         
         print(f"📊 Final segments: {len(segments)}")
         if duration:
             print(f"   Average: {len(segments)/max(duration/60, 1):.1f} segments per minute)")
+        
+        # Debug: Show first few segments
+        if segments:
+            print(f"   Sample segments: {segments[:3]}")
         
         if len(segments) <= 1:
             # Single segment - use GPU if available
@@ -772,17 +775,34 @@ def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None,
             
             result = transcribe_segment_aggressive(model, audio_path, (audio_path, 0, duration or 0), "SINGLE")
             full_text = result.get("text", "")
+            print(f"   Single segment transcription: '{full_text[:100]}...'")
         else:
             # Extract segments with maximum parallelism
             segment_files = extract_segments_aggressive(audio_path, segments, temp_dir, config)
             
             # Optimised parallel transcription
-            results = transcribe_parallel_aggressive(models, segment_files, config)
+            results = transcribe_parallel_aggressive(models, segment_files, segments, config, model_name)
             
-            # Combine results
-            full_text = " ".join([r.get("text", "") for r in results if r.get("text", "").strip()])
+            # Debug: Check results
+            print(f"   Transcription results: {len(results) if results else 0} segments processed")
+            if results:
+                sample_texts = [r.get("text", "") for r in results[:3] if r.get("text", "").strip()]
+                print(f"   Sample transcriptions: {sample_texts}")
+            
+            # Combine results with safety check
+            if results:
+                full_text = " ".join([r.get("text", "") for r in results if r.get("text", "").strip()])
+            else:
+                full_text = ""
         
-        if not full_text.strip():
+        # Check if we have meaningful content (not just punctuation or single characters)
+        stripped_text = full_text.strip()
+        if not stripped_text:
+            full_text = "[No speech detected]"
+        elif stripped_text in ['.', '!', '?', ',', ';', ':', '-', '_', '(', ')', '[', ']', '{', '}', '"', "'"]:
+            full_text = "[No speech detected]"
+        elif len(stripped_text.replace('.', '').replace('!', '').replace('?', '').replace(',', '').replace(';', '').replace(':', '').strip()) == 0:
+            # If text contains only punctuation, treat as no speech
             full_text = "[No speech detected]"
         
         # Post-processing
