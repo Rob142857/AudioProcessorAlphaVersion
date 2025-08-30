@@ -53,7 +53,7 @@ This program uses cutting-edge AI to convert your recordings into professionally
 
 ## 🚀 Installation (One Command - Works on Any Windows PC)
 
-### For Everyone (CPU Processing)
+### For Everyone (Automatic Hardware Detection)
 **Copy and paste this command into PowerShell or Command Prompt:**
 
 ```powershell
@@ -68,38 +68,36 @@ curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/m
 
 **This automatically:**
 - Installs Python and all dependencies
+- **Automatically detects your hardware** and installs optimal PyTorch build:
+  - 🎯 **NVIDIA GPU**: CUDA acceleration (5-15x faster)
+  - 🎯 **AMD/Intel GPU**: DirectML acceleration (GPU accelerated)
+  - 📊 **No GPU**: CPU processing (works on any computer)
 - Downloads the program to your Downloads folder  
 - Installs the Medium AI model (~1.4GB)
 - Creates desktop shortcuts for easy access
-- Sets up CPU processing (works on any computer)
+- **No manual GPU selection required** - everything is automatic!
 
-### ⚡ GPU Acceleration Setup (Optional - For 3-40x Speed Boost)
+### ⚡ Hardware Acceleration (Installed Automatically)
 
-**After the basic installation, choose your GPU type:**
+The installer automatically detects and configures the best acceleration for your system:
 
 #### NVIDIA GPU Users (GTX 1060+, RTX Series)
-```powershell
-# Run this in the program folder after basic install
-.\.venv\Scripts\Activate.ps1
-python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
-
-**Requirements:**
-- NVIDIA GeForce GTX 1060 or newer
-- RTX series (any model)
-- Latest drivers from [nvidia.com/drivers](https://nvidia.com/drivers)
+- **Automatic Detection**: GTX/RTX series GPUs
+- **Installation**: CUDA PyTorch with cu118 wheels
+- **Performance**: 5-15x realtime processing
+- **Requirements**: Latest NVIDIA drivers
 
 #### AMD/Intel GPU Users (DirectML)
-```powershell
-# Run this in the program folder after basic install
-.\.venv\Scripts\Activate.ps1
-python -m pip install torch-directml
-```
+- **Automatic Detection**: Radeon RX, Intel Arc/Iris Xe
+- **Installation**: CPU PyTorch + torch-directml
+- **Performance**: GPU-accelerated processing
+- **Requirements**: Windows 10/11 with latest drivers
 
-**Requirements:**
-- AMD Radeon RX series
-- Intel Arc or Iris Xe graphics
-- Windows 10/11 with latest graphics drivers
+#### CPU-Only Systems
+- **Automatic Fallback**: Any computer without GPU
+- **Installation**: CPU-optimized PyTorch
+- **Performance**: Works on any Windows PC
+- **Requirements**: None additional
 
 ## 🎮 How to Use
 
