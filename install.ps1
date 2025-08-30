@@ -21,13 +21,13 @@ try {
     Write-Host "⚠ Python install failed - may already be installed" -ForegroundColor Yellow
 }
 
-# Install Visual C++ Redistributables
-Write-Host "Installing Visual C++ Redistributables..." -ForegroundColor Yellow
+# Install Visual Studio Build Tools (required for compiling packages like webrtcvad)
+Write-Host "Installing Visual Studio Build Tools..." -ForegroundColor Yellow
 try {
-    winget install --id Microsoft.VCRedist.2015+.x64 --force --accept-package-agreements --accept-source-agreements
-    Write-Host "✓ Visual C++ Redistributables installed" -ForegroundColor Green
+    winget install --id Microsoft.VisualStudio.2022.BuildTools --force --accept-package-agreements --accept-source-agreements
+    Write-Host "✓ Visual Studio Build Tools installed" -ForegroundColor Green
 } catch {
-    Write-Host "⚠ VC++ Redist install failed - may already be installed" -ForegroundColor Yellow
+    Write-Host "⚠ Build Tools install failed - webrtcvad may not install" -ForegroundColor Yellow
 }
 
 # Install Git (optional but recommended)

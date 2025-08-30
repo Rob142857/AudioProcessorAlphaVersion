@@ -149,9 +149,9 @@ def launch_gui(default_outdir: str = None):
     settings_frame.columnconfigure(1, weight=1)
 
     # Model selection
-    model_var = tk.StringVar(value="medium")
+    model_var = tk.StringVar(value="large")
     ttk.Label(settings_frame, text="AI Model:").grid(column=0, row=0, sticky=tk.W, padx=(0, 10))
-    model_combo = ttk.Combobox(settings_frame, textvariable=model_var, values=("medium", "large"), 
+    model_combo = ttk.Combobox(settings_frame, textvariable=model_var, values=("large", "medium"), 
                               state="readonly", width=20)
     model_combo.grid(column=1, row=0, sticky=tk.W)
     
@@ -163,7 +163,7 @@ def launch_gui(default_outdir: str = None):
     device_combo.grid(column=3, row=0, sticky=tk.W)
     
     # Info labels (compact)
-    model_info = ttk.Label(settings_frame, text="Medium: Good quality, faster • Large: Best quality, slower", 
+    model_info = ttk.Label(settings_frame, text="Large: Best quality, slower • Medium: Good quality, faster", 
                           font=('TkDefaultFont', 8), foreground='#666666')
     model_info.grid(column=0, row=1, columnspan=2, sticky=tk.W, pady=(3, 5))
 
@@ -351,7 +351,7 @@ def main():
     parser = argparse.ArgumentParser(description="GUI for optimized speech-to-text transcription")
     parser.add_argument("--input", help="input audio/video file (if provided, runs headless)")
     parser.add_argument("--outdir", help="output folder (defaults to Downloads)")
-    parser.add_argument("--model", default="medium", help="whisper model: medium or large")
+    parser.add_argument("--model", default="large", help="whisper model: large or medium")
     parser.add_argument("--keep-temp", action="store_true")
     parser.add_argument("--device", default="auto", 
                        choices=["auto", "optimized", "cpu"],

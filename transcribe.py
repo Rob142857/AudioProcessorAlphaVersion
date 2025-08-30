@@ -227,13 +227,13 @@ def get_media_duration(path):
             return None
 
 
-def transcribe_file(input_path, model_name="medium", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", vad=True, punctuate=True, output_dir=None):
+def transcribe_file(input_path, model_name="large", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", vad=True, punctuate=True, output_dir=None):
     """
     Transcribe a single audio/video file with optimized settings for best quality.
     
     Args:
         input_path: Path to input audio/video file
-        model_name: Whisper model ("medium" or "large")
+        model_name: Whisper model ("large" or "medium")
         preprocess: Enable preprocessing (always True for quality)
         keep_temp: Keep temporary files
         bitrate: Audio bitrate for preprocessing
@@ -289,8 +289,8 @@ def transcribe_file(input_path, model_name="medium", preprocess=True, keep_temp=
         # Estimate model type based on size (approximate)
         if model_size > 700000000:  # Large model has ~1.5B parameters
             loaded_model_type = "large"
-        elif model_size > 350000000:  # Medium model has ~770M parameters
-            loaded_model_type = "medium"
+        elif model_size > 350000000:  # Large model has ~770M parameters (when cached medium loads as large)
+            loaded_model_type = "large"
         elif model_size > 70000000:  # Small model has ~244M parameters
             loaded_model_type = "small"
         elif model_size > 35000000:  # Base model has ~74M parameters
@@ -571,14 +571,14 @@ def clean_fillers(text):
     return cleaned
 
 
-def transcribe_file_no_vad(input_path, model_name="medium", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", punctuate=True, output_dir=None):
+def transcribe_file_no_vad(input_path, model_name="large", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", punctuate=True, output_dir=None):
     """
     Transcribe a single audio/video file WITHOUT VAD segmentation - transcribes entire file as one piece.
     This is useful for troubleshooting when VAD is cutting out too much content.
     
     Args:
         input_path: Path to input audio/video file
-        model_name: Whisper model ("medium" or "large")
+        model_name: Whisper model ("large" or "medium")
         preprocess: Enable preprocessing (always True for quality)
         keep_temp: Keep temporary files
         bitrate: Audio bitrate for preprocessing
@@ -633,8 +633,8 @@ def transcribe_file_no_vad(input_path, model_name="medium", preprocess=True, kee
         # Estimate model type based on size (approximate)
         if model_size > 700000000:  # Large model has ~1.5B parameters
             loaded_model_type = "large"
-        elif model_size > 350000000:  # Medium model has ~770M parameters
-            loaded_model_type = "medium"
+        elif model_size > 350000000:  # Large model has ~770M parameters (when cached medium loads as large)
+            loaded_model_type = "large"
         elif model_size > 70000000:  # Small model has ~244M parameters
             loaded_model_type = "small"
         elif model_size > 35000000:  # Base model has ~74M parameters
@@ -889,7 +889,7 @@ def post_process_segments(segments, min_duration=0.5, merge_gap=0.3, max_segment
         return filtered
 
 
-def transcribe_lecture(input_path, model_name="medium", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", punctuate=True, output_dir=None):
+def transcribe_lecture(input_path, model_name="large", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", punctuate=True, output_dir=None):
     """
     Specialized transcription for lectures with less optimised VAD settings.
     Lectures often have pauses, background noise, and varying audio quality that standard VAD misses.
@@ -941,8 +941,8 @@ def transcribe_lecture(input_path, model_name="medium", preprocess=True, keep_te
         # Estimate model type based on size (approximate)
         if model_size > 700000000:  # Large model has ~1.5B parameters
             loaded_model_type = "large"
-        elif model_size > 350000000:  # Medium model has ~770M parameters
-            loaded_model_type = "medium"
+        elif model_size > 350000000:  # Large model has ~770M parameters (when cached medium loads as large)
+            loaded_model_type = "large"
         elif model_size > 70000000:  # Small model has ~244M parameters
             loaded_model_type = "small"
         elif model_size > 35000000:  # Base model has ~74M parameters
@@ -1136,7 +1136,7 @@ def clean_fillers_lecture(text):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Transcribe audio/video to text and docx with optimized settings")
     parser.add_argument("input", help="input audio or video file")
-    parser.add_argument("--model", default="medium", help="whisper model: medium, large")
+    parser.add_argument("--model", default="large", help="whisper model: large, medium")
     parser.add_argument("--keep-temp", action="store_true", help="keep temporary files")
     parser.add_argument("--bitrate", default="192k", help="mp3 bitrate for converted audio")
     parser.add_argument("--device", default="auto", help="device preference: auto/cpu/cuda/dml")

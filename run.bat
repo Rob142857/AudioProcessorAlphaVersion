@@ -41,93 +41,26 @@ if errorlevel 1 (
   )
 )
 
-REM Offer an optional guided PyTorch install
-echo.
-echo 🔍 Detecting hardware and installing optimal PyTorch build...
-echo.
-
-REM Automatic hardware detection and PyTorch installation
-python -c "
-import subprocess
-import sys
-import os
-
-def run_command(cmd):
-    try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        return result.returncode == 0, result.stdout, result.stderr
-    except Exception as e:
-        return False, '', str(e)
-
-def detect_cuda():
-    try:
-        success, stdout, stderr = run_command('nvidia-smi --query-gpu=name --format=csv,noheader,nounits')
-        if success and stdout.strip():
-            gpu_name = stdout.strip().split('\n')[0]
-            print(f'🎯 CUDA GPU detected: {gpu_name}')
-            return True, gpu_name
-    except:
-        pass
-    return False, None
-
-def detect_directml():
-    try:
-        # Check for AMD/Intel GPUs that support DirectML
-        success, stdout, stderr = run_command('wmic path win32_videocontroller get name')
-        if success:
-            gpu_info = stdout.lower()
-            if 'amd' in gpu_info or 'radeon' in gpu_info or 'intel' in gpu_info or 'arc' in gpu_info:
-                print('🎯 DirectML-compatible GPU detected')
-                return True
-    except:
-        pass
-    return False, None
-
-print('🔍 Scanning for GPU acceleration options...')
-
-# Priority: CUDA > DirectML > CPU
-cuda_available, cuda_gpu = detect_cuda()
-directml_available, _ = detect_directml()
-
-if cuda_available:
-    print(f'✅ Installing CUDA PyTorch for {cuda_gpu}...')
-    success, stdout, stderr = run_command('python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118')
-    if success:
-        print('✅ CUDA PyTorch installed successfully!')
-        print('🚀 Your NVIDIA GPU will accelerate transcription by 5-15x')
-    else:
-        print('⚠️  CUDA PyTorch installation failed, falling back to CPU')
-        run_command('python -m pip install --no-warn-script-location torch --index-url https://download.pytorch.org/whl/cpu')
-        
-elif directml_available:
-    print('✅ Installing DirectML PyTorch for AMD/Intel GPU...')
-    success1, _, _ = run_command('python -m pip install --no-warn-script-location torch --index-url https://download.pytorch.org/whl/cpu')
-    success2, _, _ = run_command('python -m pip install --no-warn-script-location torch-directml')
-    if success1 and success2:
-        print('✅ DirectML PyTorch installed successfully!')
-        print('🚀 Your AMD/Intel GPU will accelerate transcription')
-    else:
-        print('⚠️  DirectML installation failed, using CPU-only')
-        
-else:
-    print('📊 No GPU acceleration available, installing CPU-only PyTorch...')
-    success, _, _ = run_command('python -m pip install --no-warn-script-location torch --index-url https://download.pytorch.org/whl/cpu')
-    if success:
-        print('✅ CPU PyTorch installed successfully!')
-        print('⚡ CPU processing ready (works on any computer)')
-
-print()
-print('📥 Downloading Whisper Large model (3GB)...')
-print('   This is required for best transcription quality')
-print('   Download may take 5-15 minutes depending on your internet speed...')
-success, _, _ = run_command('python preload_models.py')
-if success:
-    print('✅ Large AI model downloaded and cached successfully!')
-    print('   Ready for high-quality transcription')
-else:
-    print('⚠️  Model download failed - will download on first use')
-    print('   This will delay your first transcription')
-"
+REM Install CUDA PyTorch automatically (no user interaction)
+echo Installing CUDA PyTorch for NVIDIA GPU acceleration...
+python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+if errorlevel 1 (
+  echo.
+  echo ===== CUDA PYTORCH INSTALLATION FAILED =====
+  echo This may happen if you don't have an NVIDIA GPU or drivers.
+  echo Falling back to CPU-only PyTorch...
+  python -m pip install --no-warn-script-location torch --index-url https://download.pytorch.org/whl/cpu
+) else (
+  echo.
+  echo ===== CUDA PYTORCH INSTALLED SUCCESSFULLY =====
+  echo Your NVIDIA GPU should now be available for acceleration.
+)
+echo Preloading Whisper large model...
+python preload_models.py
+if errorlevel 1 (
+  echo Model preloading failed. Check PyTorch installation above.
+)
+goto :launch
 
 :launch
 echo Launching GUI...
