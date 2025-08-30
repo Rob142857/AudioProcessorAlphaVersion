@@ -27,7 +27,7 @@ def run_transcription(input_file: str, outdir: str, output_queue: queue.Queue):
     """Run simplified transcription with large model and auto device detection."""
     try:
         # Import and run the simplified transcription
-        from transcribe_aggressive import transcribe_file_simple_auto
+        from transcribe_optimised import transcribe_file_simple_auto
         
         output_queue.put(f"🚀 Starting SIMPLIFIED transcription for: {os.path.basename(input_file)}\n")
         output_queue.put("Using Large model with auto device detection\n")
@@ -76,96 +76,23 @@ def launch_gui(default_outdir: str = None):
     root.columnconfigure(0, weight=1)
     root.rowconfigure(0, weight=1)
 
-    # Modern styling with Visual Studio-like theme
+    # Modern styling
     style = ttk.Style()
-
-    # Configure overall theme
-    style.theme_use('default')
-
-    # Modern color palette (Visual Studio Code inspired)
-    colors = {
-        'bg_primary': '#1e1e1e',      # Main background
-        'bg_secondary': '#252526',   # Card backgrounds
-        'bg_tertiary': '#2d2d30',    # Input fields
-        'accent': '#007acc',         # Blue accent
-        'accent_hover': '#005a9e',   # Darker blue for hover
-        'success': '#4ade80',        # Green
-        'warning': '#f6ad55',        # Orange
-        'error': '#ef4444',          # Red
-        'text_primary': '#ffffff',   # Main text
-        'text_secondary': '#cccccc', # Secondary text
-        'text_muted': '#888888',     # Muted text
-        'border': '#3e3e42'          # Borders
-    }
-
-    # Configure frames
-    style.configure('Modern.TFrame', background=colors['bg_primary'])
-    style.configure('Card.TLabelframe', background=colors['bg_secondary'], borderwidth=1, relief='solid')
-    style.configure('Card.TLabelframe.Label', background=colors['bg_secondary'], foreground=colors['accent'], font=('Segoe UI', 11, 'bold'))
-
-    # Configure labels
-    style.configure('Modern.TLabel', background=colors['bg_primary'], foreground=colors['text_primary'], font=('Segoe UI', 10))
-    style.configure('Title.TLabel', font=('Segoe UI', 18, 'bold'), foreground=colors['accent'], background=colors['bg_primary'])
-    style.configure('Subtitle.TLabel', font=('Segoe UI', 9), foreground=colors['text_secondary'], background=colors['bg_primary'])
-
-    # Configure buttons with modern styling
-    style.configure('Modern.TButton',
-                   font=('Segoe UI', 10, 'bold'),
-                   padding=12,
-                   background=colors['accent'],
-                   foreground=colors['text_primary'],
-                   borderwidth=0,
-                   relief='flat')
-    style.map('Modern.TButton',
-             background=[('active', colors['accent_hover']),
-                        ('pressed', colors['accent_hover'])],
-             foreground=[('active', colors['text_primary']),
-                        ('pressed', colors['text_primary'])])
-
-    # Secondary button style (for cancel)
-    style.configure('Secondary.TButton',
-                   font=('Segoe UI', 10, 'bold'),
-                   padding=12,
-                   background=colors['bg_tertiary'],
-                   foreground=colors['text_secondary'],
-                   borderwidth=1,
-                   relief='solid')
-    style.map('Secondary.TButton',
-             background=[('active', colors['bg_secondary']),
-                        ('pressed', colors['bg_secondary'])],
-             foreground=[('active', colors['text_primary']),
-                        ('pressed', colors['text_primary'])])
-
-    # Configure entries
-    style.configure('Modern.TEntry',
-                   font=('Segoe UI', 10),
-                   fieldbackground=colors['bg_tertiary'],
-                   borderwidth=1,
-                   relief='solid',
-                   insertcolor=colors['text_primary'])
-
-    # Configure progress bar
-    style.configure('Horizontal.TProgressbar',
-                   background=colors['accent'],
-                   troughcolor=colors['bg_tertiary'],
-                   borderwidth=0,
-                   lightcolor=colors['accent'],
-                   darkcolor=colors['accent'])
+    style.configure('Modern.TFrame', background='#1e1e1e')
+    style.configure('Modern.TLabel', background='#1e1e1e', foreground='#ffffff', font=('Segoe UI', 10))
+    style.configure('Modern.TButton', font=('Segoe UI', 10, 'bold'), padding=10)
+    style.configure('Title.TLabel', font=('Segoe UI', 16, 'bold'), foreground='#007acc', background='#1e1e1e')
+    style.configure('Card.TLabelframe', background='#2d2d30', foreground='#ffffff', borderwidth=1, relief='solid')
+    style.configure('Card.TLabelframe.Label', background='#2d2d30', foreground='#007acc', font=('Segoe UI', 11, 'bold'))
 
     mainframe = ttk.Frame(root, style='Modern.TFrame', padding="20 20 20 20")
-    mainframe.grid(column=0, row=0, sticky="nsew")
+    mainframe.grid(column=0, row=0, sticky=(tk.N, tk.W, tk.E, tk.S))
     mainframe.columnconfigure(1, weight=1)
-    mainframe.rowconfigure(0, weight=0)  # Title
-    mainframe.rowconfigure(1, weight=0)  # Input
-    mainframe.rowconfigure(2, weight=0)  # Output
-    mainframe.rowconfigure(3, weight=0)  # Settings
-    mainframe.rowconfigure(4, weight=0)  # Progress
-    mainframe.rowconfigure(5, weight=1)  # Log area
-    mainframe.rowconfigure(6, weight=0)  # Buttons
+    mainframe.rowconfigure(4, weight=1)
 
     # Title with icon
     title_frame = ttk.Frame(mainframe, style='Modern.TFrame')
-    title_frame.grid(column=0, row=0, columnspan=3, pady=(0, 20), sticky="ew")
+    title_frame.grid(column=0, row=0, columnspan=3, pady=(0, 20), sticky=(tk.W, tk.E))
     title_frame.columnconfigure(1, weight=1)
 
     title_label = ttk.Label(title_frame, text="🎙️ Audio Transcription Pro", style='Title.TLabel')
@@ -177,14 +104,14 @@ def launch_gui(default_outdir: str = None):
 
     # Input file selection with modern card design
     input_frame = ttk.LabelFrame(mainframe, text=" 📁 File Selection ", style='Card.TLabelframe', padding="15 15 15 15")
-    input_frame.grid(column=0, row=1, columnspan=3, sticky="ew", pady=(0, 15))
+    input_frame.grid(column=0, row=1, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15))
     input_frame.columnconfigure(1, weight=1)
 
     ttk.Label(input_frame, text="Audio/Video File:", style='Modern.TLabel').grid(column=0, row=0, sticky=tk.W, pady=(0, 8))
 
     input_var = tk.StringVar()
     input_entry = ttk.Entry(input_frame, textvariable=input_var, font=('Segoe UI', 10))
-    input_entry.grid(column=0, row=1, columnspan=2, sticky="ew", pady=(0, 10), padx=(0, 10))
+    input_entry.grid(column=0, row=1, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10), padx=(0, 10))
 
     def browse_input():
         filetypes = [
@@ -209,7 +136,7 @@ def launch_gui(default_outdir: str = None):
     # Output info
     downloads_dir = default_outdir if default_outdir else DEFAULT_DOWNLOADS
     output_frame = ttk.LabelFrame(mainframe, text=" 📍 Output Location ", style='Card.TLabelframe', padding="15 10 15 10")
-    output_frame.grid(column=0, row=2, columnspan=3, sticky="ew", pady=(0, 15))
+    output_frame.grid(column=0, row=2, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15))
 
     output_label = ttk.Label(output_frame, text=f"💾 {downloads_dir}", style='Modern.TLabel', 
                             font=('Segoe UI', 9), foreground='#cccccc')
@@ -217,18 +144,20 @@ def launch_gui(default_outdir: str = None):
 
     # Settings info with modern card
     settings_frame = ttk.LabelFrame(mainframe, text=" ⚙️ Configuration ", style='Card.TLabelframe', padding="15 10 15 10")
-    settings_frame.grid(column=0, row=3, columnspan=3, sticky="ew", pady=(0, 15))
+    settings_frame.grid(column=0, row=3, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15))
 
     settings_text = """🎯 Large AI Model (Best Quality)
 🖥️  Auto Device Detection (CUDA → DirectML → CPU)
+🚫 No VAD Segmentation (Faster for continuous speech)
+🚫 No Audio Preprocessing (Direct processing)
 🧵  Maximum CPU Threads (RAM-optimized)
 🛡️  AI Guardrails Disabled (Captures all audio)"""
 
-    settings_label = tk.Text(settings_frame, height=4, wrap=tk.WORD, font=('Consolas', 9), 
+    settings_label = tk.Text(settings_frame, height=6, wrap=tk.WORD, font=('Consolas', 9), 
                             bg='#2d2d30', fg='#ffffff', borderwidth=0, highlightthickness=0)
     settings_label.insert(tk.END, settings_text)
     settings_label.config(state=tk.DISABLED)
-    settings_label.grid(column=0, row=0, sticky="ew")
+    settings_label.grid(column=0, row=0, sticky=(tk.W, tk.E))
 
     # Progress and Status section
     progress_frame = ttk.LabelFrame(mainframe, text=" 📊 Progress & Status ", style='Card.TLabelframe', padding="15 15 15 15")
@@ -464,26 +393,9 @@ def launch_gui(default_outdir: str = None):
         t = threading.Thread(target=worker, daemon=True)
         t.start()
 
-    # Button frame for better layout
-    button_frame = ttk.Frame(mainframe, style='Modern.TFrame')
-    button_frame.grid(column=0, row=6, columnspan=3, pady=(20, 20))
-    button_frame.columnconfigure(0, weight=1)
-    button_frame.columnconfigure(1, weight=0)
-    button_frame.columnconfigure(2, weight=0)
-
-    # Cancel button
-    def cancel_transcription():
-        if messagebox.askyesno("Cancel Transcription", "Are you sure you want to cancel the current transcription?"):
-            root.quit()
-
-    cancel_btn = ttk.Button(button_frame, text="❌ Cancel", command=cancel_transcription,
-                           style='Secondary.TButton', width=15)
-    cancel_btn.grid(column=0, row=0, sticky="w", padx=(0, 10))
-
-    # Run button with professional styling
-    run_btn = ttk.Button(button_frame, text="🚀 Start Transcription", command=start_transcription_thread,
-                        style='Modern.TButton', width=20)
-    run_btn.grid(column=1, row=0, sticky="e", padx=(10, 0))
+    # Run button
+    run_btn = ttk.Button(mainframe, text="Start Transcription", command=start_transcription_thread)
+    run_btn.grid(column=1, row=6, pady=(10, 0))
 
     poll_queue()
     root.mainloop()

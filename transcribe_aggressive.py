@@ -12,13 +12,12 @@ import shutil
 import subprocess
 import tempfile
 import argparse
-# Lazy imports - moved inside functions to prevent CPU spike during GUI startup
-# import whisper
-# import torch
-# from docx import Document
-# from moviepy import VideoFileClip, AudioFileClip
-# import imageio_ffmpeg as iio_ffmpeg
-# from deepmultilingualpunctuation import PunctuationModel
+import whisper
+import torch
+from docx import Document
+from moviepy import VideoFileClip, AudioFileClip
+import imageio_ffmpeg as iio_ffmpeg
+from deepmultilingualpunctuation import PunctuationModel
 try:
     import webrtcvad
     WEBRTCVAD_AVAILABLE = True
@@ -79,7 +78,7 @@ def check_memory_safety(min_gb=1.5):
     return True
 
 
-def extract_segments_optimised(audio_path, segments, temp_dir, config):
+def extract_segments_aggressive(audio_path, segments, temp_dir, config):
     """Ultra-fast parallel segment extraction using all available CPU cores with memory safeguards."""
     print(f"🎵 Extracting {len(segments)} segments with memory-safe batch processing...")
     
@@ -174,9 +173,6 @@ def extract_segments_optimised(audio_path, segments, temp_dir, config):
 
 def get_maximum_hardware_config():
     """Get maximum hardware utilization configuration for all available devices."""
-    # Lazy import to prevent CPU spike during GUI startup
-    import torch
-    
     cpu_cores = multiprocessing.cpu_count()
     memory = psutil.virtual_memory()
     total_ram_gb = memory.total / (1024**3)
@@ -259,9 +255,6 @@ def get_maximum_hardware_config():
 
 def monitor_system_usage():
     """Monitor CPU and GPU usage during processing."""
-    # Lazy import to prevent CPU spike during GUI startup
-    import torch
-    
     def monitor_worker():
         while True:
             cpu_percent = psutil.cpu_percent(interval=1)
@@ -285,12 +278,8 @@ def monitor_system_usage():
     return monitor_thread
 
 
-def load_models_optimised(model_name="medium", config=None):
+def load_models_aggressive(model_name="medium", config=None):
     """Load multiple model instances for maximum parallel processing with RAM monitoring."""
-    # Lazy imports to prevent CPU spike during GUI startup
-    import torch
-    import whisper
-    
     if config is None:
         config = {"gpu_workers": 0, "cpu_workers": 1}
     
@@ -348,7 +337,7 @@ def load_models_optimised(model_name="medium", config=None):
                 print(f"   GPU Model {i}: Failed - {e}")
     
     if config["cpu_workers"] > 0:
-                # Adjust CPU model count based on RAM constraints - MORE OPTIMISED
+        # Adjust CPU model count based on RAM constraints - MORE AGGRESSIVE
         max_cpu_models = min(
             config["cpu_workers"] // 2,  # Allow more models (was // 4)
             8,  # Higher maximum (was 4)
@@ -384,7 +373,7 @@ def load_models_optimised(model_name="medium", config=None):
     return models
 
 
-def transcribe_segment_optimised(model, audio_path, segment_info, worker_id):
+def transcribe_segment_aggressive(model, audio_path, segment_info, worker_id):
     """Optimised transcription with performance monitoring."""
     start_time = time.time()
     segment_path, seg_start, seg_end = segment_info
@@ -490,7 +479,7 @@ def extract_single_segment_worker_thread(args):
         return None
 
 
-def transcribe_parallel_optimised(models, segment_files, segments, config, model_name="medium"):
+def transcribe_parallel_aggressive(models, segment_files, segments, config, model_name="medium"):
     """Maximum parallel transcription using all GPU and CPU resources with progress tracking."""
 
     # Safety check for None or empty segments
@@ -569,7 +558,7 @@ def gpu_worker_process(args):
             seg_id, segment_info = queue.get_nowait()
             print(f"DEBUG: GPU Worker {worker_id} processing segment {seg_id}", file=sys.__stderr__)
 
-            result = transcribe_segment_optimised(model, None, segment_info, f"GPU-{worker_id}")
+            result = transcribe_segment_aggressive(model, None, segment_info, f"GPU-{worker_id}")
             result["segment_id"] = seg_id
             worker_results.append(result)
             processed_count += 1
@@ -618,7 +607,7 @@ def cpu_worker_process(args):
         try:
             seg_id, segment_info = queue.get_nowait()
 
-            result = transcribe_segment_optimised(model, None, segment_info, f"CPU-{worker_id}")
+            result = transcribe_segment_aggressive(model, None, segment_info, f"CPU-{worker_id}")
             result["segment_id"] = seg_id
             worker_results.append(result)
             processed_count += 1
@@ -635,15 +624,10 @@ def cpu_worker_process(args):
     return worker_results
 
 
-def transcribe_file_optimised(input_path, model_name="medium", output_dir=None, force_optimised=True):
+def transcribe_file_aggressive(input_path, model_name="medium", output_dir=None, force_aggressive=True):
     """
     Ultra-optimised transcription using maximum available hardware resources.
     """
-    # Lazy imports to prevent CPU spike during GUI startup
-    import torch
-    from docx import Document
-    from deepmultilingualpunctuation import PunctuationModel
-    
     from transcribe import (vad_segment_times, post_process_segments, 
                           preprocess_audio, get_media_duration, 
                           split_into_paragraphs, format_duration)
@@ -691,7 +675,7 @@ def transcribe_file_optimised(input_path, model_name="medium", output_dir=None, 
         temp_files.append(pre_path)
         
         # Load models optimally
-        models = load_models_optimised(model_name, config)
+        models = load_models_aggressive(model_name, config)
         if not models:
             raise Exception("Failed to load any models!")
         print()  # Add spacing after model loading
@@ -718,15 +702,15 @@ def transcribe_file_optimised(input_path, model_name="medium", output_dir=None, 
             gpu_model = next((v for k, v in models.items() if k.startswith('gpu')), None)
             model = gpu_model or list(models.values())[0]
             
-            result = transcribe_segment_optimised(model, audio_path, (audio_path, 0, duration or 0), "SINGLE")
+            result = transcribe_segment_aggressive(model, audio_path, (audio_path, 0, duration or 0), "SINGLE")
             full_text = result.get("text", "")
             print(f"   Single segment transcription: '{full_text[:100]}...'")
         else:
             # Extract segments with maximum parallelism
-            segment_files = extract_segments_optimised(audio_path, segments, temp_dir, config)
+            segment_files = extract_segments_aggressive(audio_path, segments, temp_dir, config)
             
             # Optimised parallel transcription
-            results = transcribe_parallel_optimised(models, segment_files, segments, config, model_name)
+            results = transcribe_parallel_aggressive(models, segment_files, segments, config, model_name)
             
             # Debug: Check results
             print(f"   Transcription results: {len(results) if results else 0} segments processed")
@@ -849,12 +833,6 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
     - No VAD, no preprocessing
     - AI guardrails disabled (very low thresholds)
     """
-    # Lazy imports to prevent CPU spike during GUI startup
-    import torch
-    import whisper
-    from docx import Document
-    from deepmultilingualpunctuation import PunctuationModel
-    
     from transcribe import (get_media_duration, split_into_paragraphs, format_duration)
     
     start_time = time.time()
@@ -945,98 +923,13 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
         primary_device, primary_model = models[0]
         print(f"📊 Using {primary_device.upper()} model for transcription")
         
-        # Add progress monitoring and timeout protection
-        import threading
-        
-        transcription_complete = False
-        transcription_result = None
-        transcription_error = None
-        
-        def monitor_transcription():
-            nonlocal transcription_complete, transcription_result, transcription_error
-            try:
-                print("🔄 Starting Whisper transcription process...")
-                
-                # Use more conservative parameters to prevent hanging
-                result = primary_model.transcribe(input_path, 
-                                        language=None,
-                                        compression_ratio_threshold=2.4,    # Less aggressive than inf
-                                        logprob_threshold=-2.0,             # Less aggressive than -10.0
-                                        no_speech_threshold=0.3,            # Less aggressive than 0.0
-                                        condition_on_previous_text=False,
-                                        temperature=0.0,
-                                        verbose=True)  # Enable verbose output for progress
-                
-                transcription_result = result
-                transcription_complete = True
-                print("✅ Whisper transcription completed successfully")
-                
-            except Exception as e:
-                transcription_error = e
-                transcription_complete = True
-                print(f"❌ Whisper transcription failed: {e}")
-        
-        # Start transcription in a separate thread with timeout
-        transcription_thread = threading.Thread(target=monitor_transcription, daemon=True)
-        transcription_thread.start()
-        
-        # Monitor progress and add timeout protection
-        start_transcription_time = time.time()
-        timeout_minutes = 60  # 60 minute timeout for long files
-        
-        print(f"⏱️  Monitoring transcription progress (timeout: {timeout_minutes} minutes)...")
-        
-        while not transcription_complete and (time.time() - start_transcription_time) < (timeout_minutes * 60):
-            time.sleep(5)  # Check every 5 seconds
-            
-            # Check if GPU memory is getting too high
-            if torch.cuda.is_available():
-                try:
-                    gpu_memory_used = torch.cuda.memory_allocated() / (1024**3)  # GB
-                    gpu_memory_total = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
-                    memory_percent = (gpu_memory_used / gpu_memory_total) * 100
-                    
-                    elapsed = time.time() - start_transcription_time
-                    print(f"📊 Progress: {elapsed:.0f}s elapsed | GPU Memory: {gpu_memory_used:.1f}/{gpu_memory_total:.1f}GB ({memory_percent:.1f}%)")
-                    
-                    # If GPU memory usage is very high, try to clear cache (less frequent warnings)
-                    if memory_percent > 95:
-                        print("🔄 GPU memory optimization (normal for max performance)")
-                        torch.cuda.empty_cache()
-                        
-                except Exception as e:
-                    print(f"⚠️  GPU monitoring error: {e}")
-        
-        # Check if transcription completed or timed out
-        if not transcription_complete:
-            print(f"⏰ Transcription timed out after {timeout_minutes} minutes")
-            print("🔄 Attempting fallback to CPU processing...")
-            
-            # Try CPU fallback
-            try:
-                cpu_model = whisper.load_model("large", device="cpu")
-                print("🔄 Switching to CPU model for transcription...")
-                
-                result = cpu_model.transcribe(input_path, 
-                                    language=None,
-                                    compression_ratio_threshold=2.4,
-                                    logprob_threshold=-2.0,
-                                    no_speech_threshold=0.3,
-                                    condition_on_previous_text=False,
-                                    temperature=0.0)
-                
-                transcription_result = result
-                print("✅ CPU fallback transcription completed")
-                
-            except Exception as cpu_e:
-                raise Exception(f"Both GPU and CPU transcription failed. GPU error: {transcription_error}, CPU error: {cpu_e}")
-        
-        # Check for transcription errors
-        if transcription_error:
-            raise Exception(f"Transcription failed: {transcription_error}")
-        
-        # Process the result
-        result = transcription_result
+        result = primary_model.transcribe(input_path, 
+                                language=None,
+                                compression_ratio_threshold=float('inf'),  # Disabled
+                                logprob_threshold=-10.0,                   # Very low
+                                no_speech_threshold=0.0,                   # Disabled
+                                condition_on_previous_text=False,
+                                temperature=0.0)
         
         # Handle result
         if isinstance(result, dict):
