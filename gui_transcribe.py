@@ -199,7 +199,7 @@ Full Audio Capture (All Content Preserved)""".format(downloads_dir)
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
 
-    log_text = tk.Text(log_frame, wrap=tk.WORD, height=15, font=('Segoe UI', 9),
+    log_text = tk.Text(log_frame, wrap=tk.WORD, height=25, font=('Segoe UI', 9),
                       bg='white', fg='#2c3e50', borderwidth=0, highlightthickness=0,
                       insertbackground='#2c3e50')
     log_text.grid(column=0, row=0, sticky="nsew")
