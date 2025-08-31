@@ -43,13 +43,13 @@ python check_env.py
 ```powershell
 python gui_transcribe.py
 # headless example:
-python gui_transcribe.py --input "C:\path\to\file.mp4" --outdir "$env:USERPROFILE\Downloads" --model medium --preprocess --vad --punctuate --keep-temp
+python gui_transcribe.py --input "C:\path\to\file.mp4" --outdir "$env:USERPROFILE\Downloads" --model medium --preprocess --punctuate --keep-temp
 ```
 
 Agent notes and constraints:
 - Do NOT auto-install `torch` or `torch-directml` unless you have the target CUDA/driver information. Ask the human or document the recommended wheel.
 - Model downloads are large (Whisper medium ~1.4GB; punctuation model multi-GB). Cache model folders when running in ephemeral CI.
-- Ensure `ffmpeg` is discoverable for reliable audio preprocessing and VAD extraction.
+- Ensure `ffmpeg` is discoverable for reliable audio preprocessing.
 
 Completion criteria for automated runs:
 - `.venv` exists and `pip install -r requirements.txt` succeeded

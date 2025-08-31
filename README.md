@@ -34,16 +34,14 @@ This program uses cutting-edge AI to convert your recordings into professionally
 - Processing metadata and timestamps included
 
 **🔧 Intelligent Audio Processing**
-- **Voice Activity Detection**: Automatically segments audio for parallel processing
 - **Audio Enhancement**: Noise reduction, volume normalization, format optimization
 - **Content Filtering Bypass**: Transcribes audio with music or copyright content perfectly
 - **Multi-format Support**: Handles virtually any audio/video format
 
 **🛠️ Troubleshooting Tools**
 - **Built-in Troubleshooting Mode**: Test different transcription approaches automatically
-- **VAD vs No-VAD Comparison**: Compare segmented vs continuous transcription
 - **Model Size Testing**: Test Medium vs Large models for quality differences
-- **Detailed Logging**: Comprehensive logs show processing steps and segment information
+- **Detailed Logging**: Comprehensive logs show processing steps
 
 ## 📁 Supported Files
 
@@ -64,26 +62,81 @@ curl -L https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/hea
 cd AudioProcessorAlphaVersion-main
 ```
 
-**Then run the installer:**
-```powershell
-# PowerShell (Recommended)
-irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex
-```
-
+**Then run the installer as Administrator:**
 ```cmd
-# Command Prompt Alternative
+# Right-click Command Prompt and select "Run as administrator"
+# Then run:
 curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.bat -o install.bat && install.bat
 ```
 
-### Option 2: Clone Repository and Install
+### Option 2: Clone Repository and Install (Administrator)
 
 ```cmd
+# Open Command Prompt as Administrator (right-click > Run as administrator)
 # Clone the repository
 git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git
 cd AudioProcessorAlphaVersion
 
 # Then run the installer
 curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.bat -o install.bat && install.bat
+```
+
+### COBOL-Style Instructions (For Fun!)
+
+```
+IDENTIFICATION DIVISION.
+PROGRAM-ID. INSTALL-SPEECH-TOOL.
+AUTHOR. ROBERT-EVANS.
+DATE-WRITTEN. 2025-08-31.
+
+ENVIRONMENT DIVISION.
+CONFIGURATION SECTION.
+SOURCE-COMPUTER. WINDOWS-CMD.
+OBJECT-COMPUTER. WINDOWS-CMD.
+
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+01 ADMIN-RIGHTS PIC X(3) VALUE "YES".
+01 INSTALL-STATUS PIC X(10) VALUE "PENDING".
+
+PROCEDURE DIVISION.
+MAIN-PROCEDURE.
+    DISPLAY "SPEECH TO TEXT TRANSCRIPTION TOOL INSTALLER v1.0Beta".
+    DISPLAY "=====================================================".
+    
+    PERFORM CHECK-ADMIN-RIGHTS.
+    PERFORM DOWNLOAD-PROJECT.
+    PERFORM RUN-INSTALLER.
+    PERFORM VERIFY-INSTALLATION.
+    
+    DISPLAY "INSTALLATION COMPLETE!".
+    STOP RUN.
+
+CHECK-ADMIN-RIGHTS.
+    DISPLAY "ENSURING ADMINISTRATOR PRIVILEGES...".
+    DISPLAY "RIGHT-CLICK COMMAND PROMPT -> RUN AS ADMINISTRATOR".
+    DISPLAY "ADMIN STATUS: " ADMIN-RIGHTS.
+
+DOWNLOAD-PROJECT.
+    DISPLAY "DOWNLOADING PROJECT FILES...".
+    DISPLAY "EXECUTING: curl -L https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip -o AudioProcessorAlphaVersion.zip".
+    DISPLAY "EXTRACTING ZIP FILE TO DESIRED LOCATION".
+    DISPLAY "NAVIGATING TO: cd AudioProcessorAlphaVersion-main".
+
+RUN-INSTALLER.
+    DISPLAY "EXECUTING INSTALLER AS ADMINISTRATOR...".
+    DISPLAY "COMMAND: curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.bat -o install.bat && install.bat".
+    MOVE "RUNNING" TO INSTALL-STATUS.
+    DISPLAY "INSTALL STATUS: " INSTALL-STATUS.
+
+VERIFY-INSTALLATION.
+    DISPLAY "VERIFYING INSTALLATION...".
+    DISPLAY "CHECKING: Virtual environment created".
+    DISPLAY "CHECKING: Dependencies installed".
+    DISPLAY "CHECKING: Hardware detection completed".
+    DISPLAY "CHECKING: GUI launches successfully".
+    MOVE "COMPLETE" TO INSTALL-STATUS.
+    DISPLAY "FINAL STATUS: " INSTALL-STATUS.
 ```
 
 **This automatically:**
@@ -201,7 +254,6 @@ python verify_installation.py
 
 **🔧 Always-On Quality Settings:**
 - Audio preprocessing (noise reduction, normalization)
-- Voice Activity Detection (smart audio segmentation)
 - Punctuation restoration (proper sentences and paragraphs)  
 - Optimized AI parameters (captures all speech, ignores music filtering)
 - Clean startup (suppressed deprecated package warnings)
@@ -231,7 +283,7 @@ python verify_installation.py
 - **"Command not recognized"**: Make sure you're using PowerShell or Command Prompt as Administrator
 - **Download fails**: Check internet connection and Windows security settings
 - **Python errors**: The installer handles everything - just run the command again
-- **webrtcvad build error**: This package requires Visual Studio Build Tools. The app will work without it using simple duration-based segmentation instead of Voice Activity Detection
+- **Package build error**: Some packages may require Visual Studio Build Tools. The app will work without them
 
 **Hardware Detection Issues:**
 - **GPU not detected**: Run `python detect_hardware.py` to check hardware detection
@@ -248,12 +300,6 @@ python verify_installation.py
 
 # Test PyTorch installation
 python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
-```
-
-**Alternative Installation (if webrtcvad fails):**
-```cmd
-# Use this if the main installer fails due to build tools
-curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install_simple.bat -o install_simple.bat && install_simple.bat
 ```
 
 **Performance Issues:**
@@ -276,11 +322,8 @@ If your transcripts are too short or missing content, use the built-in troublesh
 1. **Launch the GUI**: Double-click `launch_gui.bat`
 2. **Select your file**: Click "Browse" and choose your audio/video file
 3. **Choose "Troubleshoot" mode**: In the Processing dropdown, select "Troubleshoot"
-4. **Click "Start Transcription"**: This will run 4 different tests automatically
-5. **Compare results**: Check your Downloads folder for files ending in:
-   - `_transcription.txt` (VAD + Medium model)
-   - `_no_vad_transcription.txt` (No VAD + Medium model) 
-   - Large model versions with similar suffixes
+4. **Click "Start Transcription"**: This will run different tests automatically
+5. **Compare results**: Check your Downloads folder for files with different suffixes
 
 ### Command-Line Troubleshooting
 ```cmd
@@ -289,10 +332,6 @@ troubleshoot.bat "path\to\your\audio_file.mp3"
 ```
 
 ### Common Issues & Solutions
-
-**VAD Too Aggressive (Most Common)**
-- **Symptom**: No-VAD versions are much longer than VAD versions
-- **Solution**: Use "No VAD" transcription or adjust VAD settings
 
 **Model Size Issue**
 - **Symptom**: Large model versions are significantly longer
@@ -304,11 +343,9 @@ troubleshoot.bat "path\to\your\audio_file.mp3"
 
 ### Manual Testing
 ```bash
-# Test without VAD segmentation
+# Test transcription with different models
 python transcribe.py "your_file.mp3" --model large
-
-# Test with VAD disabled
-python -c "from transcribe import transcribe_file_no_vad; transcribe_file_no_vad('your_file.mp3', model_name='large')"
+python transcribe.py "your_file.mp3" --model medium
 ```
 
 ## 💡 Pro Tips
