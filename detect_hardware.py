@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Hardware Detection Script for AudioProcessor
-Detects GPU hardware and recommends optimal PyTorch installation
+Hardware Detection and PyTorch Installation Script for AudioProcessor
+Detects GPU hardware and installs optimal PyTorch configuration
 """
 
 import subprocess
@@ -44,19 +44,36 @@ def detect_intel_gpu():
                 return True, line
     return False, None
 
-def get_pytorch_install_command(build_type):
-    """Get the appropriate PyTorch installation command"""
+def install_pytorch(build_type, description):
+    """Install PyTorch with the specified build type"""
+    print(f'📦 Installing {description}...')
     if build_type == 'cuda':
-        return 'python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118'
+        cmd = 'python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118'
     elif build_type == 'directml':
-        return 'python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && python -m pip install torch-directml'
+        # First install CPU PyTorch, then DirectML
+        cmd_cpu = 'python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu'
+        success, _, _ = run_command(cmd_cpu)
+        if success:
+            cmd = 'python -m pip install torch-directml'
+        else:
+            return False
     else:  # cpu
-        return 'python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu'
+        cmd = 'python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu'
+    
+    success, stdout, stderr = run_command(cmd)
+    if success:
+        print(f'✅ {description} installed successfully!')
+        return True
+    else:
+        print(f'❌ {description} installation failed')
+        if stderr:
+            print(f'Error: {stderr}')
+        return False
 
 def main():
-    """Main hardware detection and recommendation function"""
-    print("🔍 AudioProcessor Hardware Detection")
-    print("=" * 40)
+    """Main hardware detection and installation function"""
+    print("🔍 AudioProcessor Hardware Detection & PyTorch Installation")
+    print("=" * 60)
     print()
 
     print("System Information:")
@@ -73,9 +90,9 @@ def main():
         print(f"✅ NVIDIA GPU detected: {nvidia_name}")
         print("🚀 Recommended: CUDA PyTorch for maximum performance")
         print()
-        print("Installation command:")
-        print(f"  {get_pytorch_install_command('cuda')}")
-        return 'cuda'
+        if install_pytorch('cuda', 'CUDA PyTorch for NVIDIA GPU'):
+            print('🚀 CUDA acceleration ready!')
+            return True
 
     # Check for AMD GPU
     amd_detected, amd_name = detect_amd_gpu()
@@ -83,10 +100,9 @@ def main():
         print(f"✅ AMD GPU detected: {amd_name}")
         print("🚀 Recommended: DirectML PyTorch for GPU acceleration")
         print()
-        print("Installation commands:")
-        for cmd in get_pytorch_install_command('directml').split(' && '):
-            print(f"  {cmd}")
-        return 'directml'
+        if install_pytorch('directml', 'DirectML PyTorch for AMD GPU'):
+            print('🚀 DirectML acceleration ready!')
+            return True
 
     # Check for Intel GPU
     intel_detected, intel_name = detect_intel_gpu()
@@ -94,20 +110,24 @@ def main():
         print(f"✅ Intel GPU detected: {intel_name}")
         print("🚀 Recommended: DirectML PyTorch for GPU acceleration")
         print()
-        print("Installation commands:")
-        for cmd in get_pytorch_install_command('directml').split(' && '):
-            print(f"  {cmd}")
-        return 'directml'
+        if install_pytorch('directml', 'DirectML PyTorch for Intel GPU'):
+            print('🚀 DirectML acceleration ready!')
+            return True
 
-    # No GPU detected
+    # Fallback to CPU-only
     print("💻 No compatible GPU detected")
-    print("📦 Recommended: CPU-only PyTorch")
+    print("📦 Installing CPU-only PyTorch (universal compatibility)")
     print()
-    print("Installation command:")
-    print(f"  {get_pytorch_install_command('cpu')}")
-    print()
-    print("ℹ️  CPU-only mode will work but may be slower for large files")
-    return 'cpu'
+    if install_pytorch('cpu', 'CPU-only PyTorch'):
+        print('✅ CPU PyTorch ready!')
+        print('ℹ️  CPU-only mode will work but may be slower for large files')
+        return True
+    else:
+        print('❌ All PyTorch installation attempts failed!')
+        print('ℹ️  You can manually install PyTorch later with:')
+        print('   pip install torch --index-url https://download.pytorch.org/whl/cpu')
+        return False
 
 if __name__ == "__main__":
-    main()
+    success = main()
+    sys.exit(0 if success else 1)

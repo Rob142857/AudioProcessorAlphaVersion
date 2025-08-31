@@ -1,4 +1,4 @@
-# 🎙️ Professional Speech-to-Text Transcription Tool
+# 🎙️ Speech to Text Transcription Tool v1.0Beta
 
 **Transform any audio or video into perfect text documents in minutes, not hours.**
 
@@ -75,7 +75,6 @@ curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/m
   - **AMD/Intel GPU**: DirectML acceleration (GPU performance)
   - **No GPU**: CPU-only mode (universal compatibility)
 - ✅ Downloads the Large AI model (~2.8GB) for maximum quality
-- ✅ Creates desktop shortcuts for easy access
 - ✅ Verifies installation with automated testing
 
 ### ⚡ Hardware-Specific Installation (Manual Override)
@@ -130,7 +129,7 @@ python verify_installation.py
 
 ### Quick Start
 1. **Run the installer** command above
-2. **Launch the program**: Double-click `launch_gui.bat` or the desktop shortcut
+2. **Launch the program**: Run `python gui_transcribe.py` or use the provided batch files
 3. **Select your file**: Click "Browse" and choose any audio/video file
 4. **Choose settings**: 
    - **Model**: Medium (faster) or Large (best quality)

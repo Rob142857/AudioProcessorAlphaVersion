@@ -1,5 +1,5 @@
 @echo off
-echo === AudioProcessor Complete Installer ===
+echo === Speech to Text Transcription Tool v1.0Beta Complete Installer ===
 echo Installing prerequisites for Windows...
 
 REM Install Python 3.11 x64 (if not already installed)
@@ -43,13 +43,12 @@ if errorlevel 1 (
 
 echo.
 echo === Prerequisites Complete! ===
-echo Launching AudioProcessor setup...
+echo Launching Speech to Text Transcription Tool setup...
 
 REM Launch the main setup (which handles venv creation, requirements, and hardware-optimized PyTorch)
 call run.bat
 
 echo.
 echo === Installation Complete! ===
-echo You can now run: launch_gui.bat
-echo Or run: python gui_transcribe.py
+echo You can now run: python gui_transcribe.py
 pause

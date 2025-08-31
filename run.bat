@@ -89,117 +89,14 @@ echo.
 echo 🔍 Detecting hardware and installing optimal PyTorch build...
 echo.
 
-python -c "
-import subprocess
-import sys
-import platform
-
-def run_command(cmd):
-    try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
-        return result.returncode == 0, result.stdout.strip(), result.stderr.strip()
-    except:
-        return False, '', ''
-
-def detect_nvidia_gpu():
-    # Check for NVIDIA GPU using nvidia-smi
-    success, stdout, stderr = run_command('nvidia-smi --query-gpu=name --format=csv,noheader,nounits')
-    if success and stdout.strip():
-        gpu_name = stdout.strip().split('\n')[0]
-        print(f'✅ NVIDIA GPU detected: {gpu_name}')
-        return True, gpu_name
-    return False, None
-
-def detect_amd_gpu():
-    # Check for AMD GPU using dxdiag or wmic
-    success, stdout, stderr = run_command('wmic path win32_VideoController get name')
-    if success:
-        for line in stdout.split('\n'):
-            line = line.strip()
-            if 'amd' in line.lower() or 'radeon' in line.lower():
-                print(f'✅ AMD GPU detected: {line}')
-                return True, line
-    return False, None
-
-def detect_intel_gpu():
-    # Check for Intel GPU
-    success, stdout, stderr = run_command('wmic path win32_VideoController get name')
-    if success:
-        for line in stdout.split('\n'):
-            line = line.strip()
-            if 'intel' in line.lower():
-                print(f'✅ Intel GPU detected: {line}')
-                return True, line
-    return False, None
-
-def install_pytorch(build_type, description):
-    print(f'📦 Installing {description}...')
-    if build_type == 'cuda':
-        cmd = 'python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118'
-    elif build_type == 'directml':
-        cmd = 'python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu'
-        success, _, _ = run_command(cmd)
-        if success:
-            cmd = 'python -m pip install torch-directml'
-    else:  # cpu
-        cmd = 'python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu'
-    
-    success, stdout, stderr = run_command(cmd)
-    if success:
-        print(f'✅ {description} installed successfully!')
-        return True
-    else:
-        print(f'❌ {description} installation failed')
-        print(f'Error: {stderr}')
-        return False
-
-# Main detection and installation logic
-print('🔍 Scanning hardware...')
-print()
-
-# Check for NVIDIA GPU first (best performance)
-nvidia_detected, nvidia_name = detect_nvidia_gpu()
-if nvidia_detected:
-    if install_pytorch('cuda', 'CUDA PyTorch for NVIDIA GPU'):
-        print('🚀 CUDA acceleration ready!')
-        sys.exit(0)
-
-# Check for AMD GPU
-amd_detected, amd_name = detect_amd_gpu()
-if amd_detected:
-    if install_pytorch('directml', 'DirectML PyTorch for AMD GPU'):
-        print('🚀 DirectML acceleration ready!')
-        sys.exit(0)
-
-# Check for Intel GPU
-intel_detected, intel_name = detect_intel_gpu()
-if intel_detected:
-    if install_pytorch('directml', 'DirectML PyTorch for Intel GPU'):
-        print('🚀 DirectML acceleration ready!')
-        sys.exit(0)
-
-# Fallback to CPU-only
-print('💻 No compatible GPU detected, installing CPU-only PyTorch...')
-if install_pytorch('cpu', 'CPU-only PyTorch'):
-    print('✅ CPU PyTorch ready!')
-    print('ℹ️  CPU-only mode will work but may be slower for large files')
-else:
-    print('❌ All PyTorch installation attempts failed!')
-    print('ℹ️  You can manually install PyTorch later with:')
-    print('   pip install torch --index-url https://download.pytorch.org/whl/cpu')
-"
-
+python detect_hardware.py
 if errorlevel 1 (
   echo.
-  echo ===== PYTORCH INSTALLATION FAILED =====
-  echo Manual installation may be required.
-  echo Try: pip install torch --index-url https://download.pytorch.org/whl/cpu
-  echo.
+  echo ❌ Hardware detection failed, falling back to CPU-only PyTorch...
+  python -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 ) else (
   echo.
-  echo ===== PYTORCH INSTALLED SUCCESSFULLY =====
-  echo Hardware acceleration should now be available.
-  echo.
+  echo ✅ Hardware detection completed successfully!
 )
 
 echo Preloading Whisper large model...

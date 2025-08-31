@@ -1,7 +1,7 @@
-# Speech2Text Complete Installer for Virgin Windows
+# Speech to Text Transcription Tool v1.0Beta Complete Installer for Virgin Windows
 # Handles: Python, Visual C++, Git, repository setup, and launch
 
-Write-Host "=== Speech2Text Complete Installer ===" -ForegroundColor Green
+Write-Host "=== Speech to Text Transcription Tool v1.0Beta Complete Installer ===" -ForegroundColor Green
 Write-Host "Installing prerequisites for virgin Windows..." -ForegroundColor Yellow
 
 # Set execution policy if needed
@@ -66,10 +66,10 @@ if (!(Test-Path .\speech2textrme)) {
 Set-Location .\speech2textrme
 
 Write-Host "=== Prerequisites Complete! ===" -ForegroundColor Green
-Write-Host "Launching Speech2Text installer..." -ForegroundColor Yellow
+Write-Host "Launching Speech to Text Transcription Tool installer..." -ForegroundColor Yellow
 
 # Launch the main installer
 .\run.bat
 
 Write-Host "=== Installation Complete! ===" -ForegroundColor Green
-Write-Host "You can now run: .\launch_gui.bat" -ForegroundColor Cyan
+Write-Host "You can now run: python gui_transcribe.py" -ForegroundColor Cyan
