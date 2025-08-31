@@ -2,6 +2,28 @@
 echo === Speech to Text Transcription Tool v1.0Beta Complete Installer ===
 echo Installing prerequisites for Windows...
 
+REM Check if we're in the project directory
+if not exist "run.bat" (
+    echo.
+    echo ❌ ERROR: run.bat not found in current directory!
+    echo ℹ️  You need to download the project files first.
+    echo.
+    echo 📥 Downloading project files...
+    echo.
+    
+    REM Download the project zip
+    curl -L https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip -o AudioProcessorAlphaVersion.zip
+    
+    REM Extract the zip (requires PowerShell)
+    powershell -command "Expand-Archive -Path AudioProcessorAlphaVersion.zip -DestinationPath . -Force"
+    
+    REM Move into the extracted directory
+    cd AudioProcessorAlphaVersion-main
+    
+    echo ✅ Project files downloaded and extracted.
+    echo.
+)
+
 REM Install Python 3.11 x64 (if not already installed)
 echo Checking for Python 3.11...
 python --version >nul 2>&1

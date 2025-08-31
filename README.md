@@ -53,9 +53,18 @@ This program uses cutting-edge AI to convert your recordings into professionally
 
 ## 🚀 Installation (Fully Automated - One Command)
 
-### For Everyone (Automatic Hardware Detection)
-**Copy and paste this command into PowerShell or Command Prompt:**
+### Option 1: Download and Install (Recommended)
 
+**First, download the project files:**
+```cmd
+# Download the project zip file
+curl -L https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip -o AudioProcessorAlphaVersion.zip
+# Extract the zip file to your desired location
+# Then navigate to the extracted folder
+cd AudioProcessorAlphaVersion-main
+```
+
+**Then run the installer:**
 ```powershell
 # PowerShell (Recommended)
 irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex
@@ -63,6 +72,17 @@ irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/
 
 ```cmd
 # Command Prompt Alternative
+curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.bat -o install.bat && install.bat
+```
+
+### Option 2: Clone Repository and Install
+
+```cmd
+# Clone the repository
+git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git
+cd AudioProcessorAlphaVersion
+
+# Then run the installer
 curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.bat -o install.bat && install.bat
 ```
 
