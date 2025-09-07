@@ -21,7 +21,16 @@ try {
     Write-Host "⚠ Python install failed - may already be installed" -ForegroundColor Yellow
 }
 
-# Install Visual Studio Build Tools (required for compiling packages like webrtcvad)
+# Install Visual C++ Redistributables (runtime)
+Write-Host "Installing Visual C++ Redistributables..." -ForegroundColor Yellow
+try {
+    winget install --id Microsoft.VCRedist.2015+.x64 --force --accept-package-agreements --accept-source-agreements
+    Write-Host "✓ Visual C++ Redistributables installed" -ForegroundColor Green
+} catch {
+    Write-Host "⚠ VC++ Redistributables install failed - may already be installed" -ForegroundColor Yellow
+}
+
+# Install Visual Studio Build Tools (required for compiling native packages)
 Write-Host "Installing Visual Studio Build Tools..." -ForegroundColor Yellow
 try {
     winget install --id Microsoft.VisualStudio.2022.BuildTools --force --accept-package-agreements --accept-source-agreements
@@ -54,9 +63,11 @@ if (!(Test-Path .\speech2textrme)) {
     } else {
         Write-Host "Downloading repository ZIP..." -ForegroundColor Yellow
         Invoke-WebRequest 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip' -OutFile repo.zip
-        Expand-Archive repo.zip -Force
-        Move-Item "repo\AudioProcessorAlphaVersion-main" "speech2textrme"
-        Remove-Item repo.zip, repo -Recurse -Force
+        Expand-Archive -Path repo.zip -DestinationPath . -Force
+        if (Test-Path .\AudioProcessorAlphaVersion-main) {
+            Move-Item -Force .\AudioProcessorAlphaVersion-main .\speech2textrme
+        }
+        Remove-Item repo.zip -Force
     }
     Write-Host "✓ Repository downloaded" -ForegroundColor Green
 } else {

@@ -12,6 +12,7 @@ import os
 import threading
 import queue
 import sys
+from typing import Optional, List
 
 try:
     import tkinter as tk
@@ -19,23 +20,35 @@ try:
 except Exception:
     tk = None
 
-# Default Downloads folder with proper Windows path handling
+# Supported file extensions for batch processing
+SUPPORTED_EXTS = (
+    ".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".wma",
+    ".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm"
+)
+
+# Default Downloads folder retained for compatibility with CLI --outdir override
 DEFAULT_DOWNLOADS = os.path.normpath(os.path.join(os.path.expanduser("~"), "Downloads"))
 
-def run_transcription(input_file: str, outdir: str, output_queue: queue.Queue):
-    """Run transcription with large model and auto device detection."""
+def run_transcription(input_file: str, outdir: Optional[str], output_queue: queue.Queue):
+    """Run transcription for a single file with large model and auto device detection.
+
+    Output directory defaults to the source file directory if not provided.
+    """
     try:
         # Import and run the transcription
         from transcribe_optimised import transcribe_file_simple_auto
 
+        # Determine output dir (default to same folder as source file)
+        target_outdir = outdir if outdir else os.path.dirname(input_file)
+
         output_queue.put("Starting transcription for: {}\n".format(os.path.basename(input_file)))
         output_queue.put("Using Large model with auto device detection\n")
-        output_queue.put("No VAD, no preprocessing, maximum threads\n")
+        output_queue.put("Direct processing, maximum threads\n")
 
-        out_txt = transcribe_file_simple_auto(input_file, output_dir=outdir)
+        out_txt = transcribe_file_simple_auto(input_file, output_dir=target_outdir)
 
         if out_txt and os.path.exists(out_txt):
-            output_queue.put("Transcription complete! Files saved to Downloads folder.\n")
+            output_queue.put("Transcription complete! Files saved next to the source file.\n")
             output_queue.put("  Text file: {}\n".format(os.path.basename(out_txt)))
             output_queue.put("  Word document: {}\n".format(os.path.basename(out_txt.replace('.txt', '.docx'))))
         else:
@@ -43,6 +56,19 @@ def run_transcription(input_file: str, outdir: str, output_queue: queue.Queue):
 
     except Exception as e:
         output_queue.put("Transcription failed: {}\n".format(e))
+
+
+def run_batch_transcription(paths: List[str], outdir_override: Optional[str], output_queue: queue.Queue):
+    """Run batch transcription sequentially over provided file paths.
+
+    Each file is saved next to its source (unless outdir_override is provided).
+    """
+    total = len(paths)
+    output_queue.put("Batch mode: {} eligible files queued.\n".format(total))
+    for idx, p in enumerate(paths, start=1):
+        output_queue.put("\n[{} / {}] Processing: {}\n".format(idx, total, os.path.basename(p)))
+        run_transcription(p, outdir_override, output_queue)
+    output_queue.put("\nBatch processing complete.\n")
 
 
 class QueueWriter:
@@ -60,7 +86,7 @@ class QueueWriter:
         pass
 
 
-def launch_gui(default_outdir: str = None):
+def launch_gui(default_outdir: Optional[str] = None):
     if tk is None:
         print("Tkinter is not available in this Python build.")
         return
@@ -126,7 +152,7 @@ def launch_gui(default_outdir: str = None):
                               style='Subtitle.TLabel')
     subtitle_label.grid(column=0, row=1, sticky="w", pady=(8, 0))
 
-    # Clean file selection section
+    # Clean file/folder selection section
     file_section_label = ttk.Label(mainframe, text="File Selection", style='Section.TLabel')
     file_section_label.grid(column=0, row=1, columnspan=3, sticky="w", pady=(0, 15))
 
@@ -135,7 +161,7 @@ def launch_gui(default_outdir: str = None):
     file_frame.grid(column=0, row=2, columnspan=3, sticky="ew", pady=(0, 25))
     file_frame.columnconfigure(1, weight=1)
 
-    ttk.Label(file_frame, text="Audio/Video File:", background='white', foreground='#374151',
+    ttk.Label(file_frame, text="Audio/Video File or Folder:", background='white', foreground='#374151',
              font=('Segoe UI', 10, 'bold')).grid(column=0, row=0, sticky="w", padx=20, pady=(20, 10))
 
     input_var = tk.StringVar()
@@ -153,20 +179,38 @@ def launch_gui(default_outdir: str = None):
         p = filedialog.askopenfilename(title="Select audio/video file", filetypes=filetypes)
         if p:
             input_var.set(p)
-            status_label.config(text="Selected: {}".format(os.path.basename(p)), foreground='#059669')
+            status_label.config(text="Selected file: {}".format(os.path.basename(p)), foreground='#059669')
 
-    browse_btn = tk.Button(file_frame, text="Browse", command=browse_input,
+    def browse_folder():
+        d = filedialog.askdirectory(title="Select folder for batch processing")
+        if d:
+            input_var.set(d)
+            # Count eligible files
+            try:
+                files = [f for f in os.listdir(d) if os.path.splitext(f)[1].lower() in SUPPORTED_EXTS]
+                status_label.config(
+                    text="Selected folder: {} ({} eligible files)".format(os.path.basename(d), len(files)),
+                    foreground='#059669'
+                )
+            except Exception:
+                status_label.config(text="Selected folder: {}".format(os.path.basename(d)), foreground='#059669')
+
+    browse_btn = tk.Button(file_frame, text="Browse File", command=browse_input,
                           font=('Segoe UI', 10, 'bold'), bg='#007acc', fg='white',
                           relief='flat', borderwidth=0, padx=20, pady=8,
                           activebackground='#0056b3', activeforeground='white')
-    browse_btn.grid(column=2, row=1, sticky="e", padx=20)
+    browse_btn.grid(column=2, row=1, sticky="e", padx=(10, 10))
+
+    browse_folder_btn = tk.Button(file_frame, text="Browse Folder", command=browse_folder,
+                          font=('Segoe UI', 10, 'bold'), bg='#0ea5e9', fg='white',
+                          relief='flat', borderwidth=0, padx=20, pady=8,
+                          activebackground='#0284c7', activeforeground='white')
+    browse_folder_btn.grid(column=2, row=2, sticky="e", padx=(10, 20), pady=(0, 20))
 
     # Status label
-    status_label = ttk.Label(file_frame, text="No file selected",
+    status_label = ttk.Label(file_frame, text="No file or folder selected",
                             font=('Segoe UI', 9), foreground='#6b7280', background='white')
-    status_label.grid(column=0, row=2, columnspan=3, sticky="w", padx=20, pady=(0, 20))
-
-    downloads_dir = default_outdir if default_outdir else DEFAULT_DOWNLOADS
+    status_label.grid(column=0, row=3, columnspan=3, sticky="w", padx=20, pady=(0, 10))
 
     # Clean settings section
     settings_section_label = ttk.Label(mainframe, text="Settings", style='Section.TLabel')
@@ -178,10 +222,10 @@ def launch_gui(default_outdir: str = None):
 
     settings_text = """Large AI Model (Professional Quality)
 Auto Device Detection (CUDA -> DirectML -> CPU)
-Direct Audio Processing (No Segmentation)
+Direct Audio Processing
 Maximum CPU Threads (RAM-Optimized)
-Output Directory: {}
-Full Audio Capture (All Content Preserved)""".format(downloads_dir)
+Output Directory: Same as source file(s)
+Full Audio Capture (All Content Preserved)"""
 
     settings_label = tk.Text(settings_frame, height=6, wrap=tk.WORD, font=('Segoe UI', 10),
                             bg='white', fg='#374151', borderwidth=0, highlightthickness=0,
@@ -293,10 +337,10 @@ Full Audio Capture (All Content Preserved)""".format(downloads_dir)
 
         inp = input_var.get().strip()
         print("DEBUG: Input file path: '{}'".format(inp), file=sys.__stderr__)
-        print("DEBUG: Input file exists: {}".format(os.path.isfile(inp) if inp else 'N/A'), file=sys.__stderr__)
+        print("DEBUG: Path exists: {}".format(os.path.exists(inp) if inp else 'N/A'), file=sys.__stderr__)
 
-        if not inp or not os.path.isfile(inp):
-            error_msg = "Please select a valid audio or video file.\nPath: '{}'\nExists: {}".format(inp, os.path.isfile(inp) if inp else False)
+        if not inp or not os.path.exists(inp):
+            error_msg = "Please select a valid file or folder.\nPath: '{}'\nExists: {}".format(inp, os.path.exists(inp) if inp else False)
             print("DEBUG: Validation failed: {}".format(error_msg), file=sys.__stderr__)
             messagebox.showerror("Input Required", error_msg)
             return
@@ -310,6 +354,9 @@ Full Audio Capture (All Content Preserved)""".format(downloads_dir)
         log_text.see('end')
         log_text.configure(state='disabled')
 
+        # Disable run button during processing
+        run_btn.configure(state='disabled')
+
         def worker():
             import sys
             try:
@@ -321,7 +368,24 @@ Full Audio Capture (All Content Preserved)""".format(downloads_dir)
                 sys.stdout = QueueWriter(q)
                 sys.stderr = QueueWriter(q)
                 try:
-                    run_transcription(inp, downloads_dir, q)
+                    if os.path.isdir(inp):
+                        # Build list of eligible files (non-recursive)
+                        files = []
+                        try:
+                            for name in sorted(os.listdir(inp)):
+                                full = os.path.join(inp, name)
+                                if os.path.isfile(full) and os.path.splitext(name)[1].lower() in SUPPORTED_EXTS:
+                                    files.append(full)
+                        except Exception as e:
+                            q.put("Failed to list folder '{}': {}\n".format(inp, e))
+
+                        if not files:
+                            q.put("No supported media files found in the selected folder.\n")
+                        else:
+                            run_batch_transcription(files, outdir_override=None, output_queue=q)
+                    else:
+                        # Single file mode, save next to source file
+                        run_transcription(inp, outdir=None, output_queue=q)
                 finally:
                     sys.stdout = old_out
                     sys.stderr = old_err
@@ -333,6 +397,11 @@ Full Audio Capture (All Content Preserved)""".format(downloads_dir)
                 import traceback
                 error_msg = "Worker error: {}\n{}".format(e, traceback.format_exc())
                 q.put(error_msg)
+            finally:
+                # Re-enable button when done (from main thread via queue)
+                def enable_btn():
+                    run_btn.configure(state='normal')
+                root.after(0, enable_btn)
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
@@ -351,18 +420,31 @@ Full Audio Capture (All Content Preserved)""".format(downloads_dir)
 
 def main():
     parser = argparse.ArgumentParser(description="Speech to Text Transcription Tool v1.0Beta")
-    parser.add_argument("--input", help="input audio/video file (if provided, runs headless)")
-    parser.add_argument("--outdir", help="output folder (defaults to Downloads)")
+    parser.add_argument("--input", help="input audio/video file OR folder (if provided, runs headless)")
+    parser.add_argument("--outdir", help="optional output folder override; defaults to saving next to source file(s)")
     args = parser.parse_args()
 
-    outdir = args.outdir or DEFAULT_DOWNLOADS
+    outdir = args.outdir or None  # default to same-as-source when not specified
 
     if args.input:
         # Run headless
         q = queue.Queue()
 
         def runner():
-            run_transcription(args.input, outdir, q)
+            p = args.input
+            if os.path.isdir(p):
+                # Batch over folder (non-recursive)
+                files = [
+                    os.path.join(p, name)
+                    for name in sorted(os.listdir(p))
+                    if os.path.isfile(os.path.join(p, name)) and os.path.splitext(name)[1].lower() in SUPPORTED_EXTS
+                ]
+                if not files:
+                    q.put("No supported media files found in the provided folder.\n")
+                else:
+                    run_batch_transcription(files, outdir_override=outdir, output_queue=q)
+            else:
+                run_transcription(p, outdir, q)
 
         t = threading.Thread(target=runner)
         t.start()

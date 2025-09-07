@@ -51,6 +51,18 @@ This program uses cutting-edge AI to convert your recordings into professionally
 
 ## 🚀 Installation (Fully Automated - One Command)
 
+### Quick Install — One-Liners (Run as Administrator)
+
+```powershell
+# PowerShell (Run as Administrator)
+iex (irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1)
+```
+
+```cmd
+:: Command Prompt (Run as Administrator)
+curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.bat -o install.bat && install.bat
+```
+
 ### Option 1: Download and Install (Recommended)
 
 **First, download the project files:**
@@ -212,7 +224,7 @@ python verify_installation.py
    - **ETA Display**: Intelligent time estimates
    - **Thread Counter**: Live worker monitoring
    - **Speed Metrics**: Processing performance statistics
-6. **Find your files** in Downloads folder with perfect formatting
+6. **Find your files** saved next to the source file(s)
 
 ### Processing Modes Explained
 
@@ -361,7 +373,7 @@ python transcribe.py "your_file.mp3" --model medium
 ## 🗂️ File Locations
 
 **Program**: `%USERPROFILE%\Downloads\speech2textrme`  
-**Output files**: `%USERPROFILE%\Downloads\` (your Downloads folder)  
+**Output files**: Saved next to the source file(s)  
 **AI models**: `%USERPROFILE%\.cache\whisper\` (automatically managed)
 
 ## 🆘 Need Help?
