@@ -1,0 +1,4 @@
+onnxruntime
+transformers
+numpy
+python-docx

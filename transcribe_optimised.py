@@ -1062,12 +1062,12 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
         formatted_text = split_into_paragraphs(full_text, max_length=500)
         if isinstance(formatted_text, list):
             formatted_text = '\n\n'.join(formatted_text)
-        
-        # Save outputs
+
+        # Prepare output file names using plain base name
         base_name = os.path.splitext(os.path.basename(input_path))[0]
-        txt_path = os.path.join(output_dir, f"{base_name}_maximum_auto.txt")
-        docx_path = os.path.join(output_dir, f"{base_name}_maximum_auto.docx")
-        
+        txt_path = os.path.join(output_dir, f"{base_name}.txt")
+        docx_path = os.path.join(output_dir, f"{base_name}.docx")
+
         # Save files
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write(formatted_text)
