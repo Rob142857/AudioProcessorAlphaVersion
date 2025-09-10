@@ -22,7 +22,7 @@ if "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
 :arm64_install
 echo.
 echo === ARM64 Installation ===
-echo This will install the WhisperCPP version optimized for ARM64.
+echo This will install the WhisperCPP version optimized for ARM64 with NPU acceleration.
 echo.
 
 REM Check if ARM files exist
@@ -41,22 +41,22 @@ if exist "whispercpp_arm" (
     python -m pip install --upgrade pip
     python -m pip install -r requirements.txt
 
-    echo Launching ARM64 GUI...
-    python gui_transcribe.py
+    echo.
+    echo === ARM64 NPU Setup Complete ===
+    echo Your ARM64 device is now configured with NPU acceleration!
+    echo.
+    echo To launch the GUI:
+    echo   cd whispercpp_arm
+    echo   python gui_transcribe.py
+    echo.
+    echo The GUI will show "Whisper.cpp ARM64 Transcription (NPU Accelerated)"
+    echo.
 ) else (
-    echo ARM64 setup not found. Downloading...
-    curl -L https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip -o AudioProcessorAlphaVersion.zip
-    powershell -command "Expand-Archive -Path AudioProcessorAlphaVersion.zip -DestinationPath . -Force"
-    cd AudioProcessorAlphaVersion-main\whispercpp_arm
-
-    REM Install requirements
-    python -m venv .venv_arm
-    call .venv_arm\Scripts\Activate.bat
-    python -m pip install --upgrade pip
-    python -m pip install -r requirements.txt
-
-    echo Launching ARM64 GUI...
-    python gui_transcribe.py
+    echo ARM64 setup not found in repository.
+    echo This should not happen - ARM64 files should be included.
+    echo Please ensure you're using the latest version from GitHub.
+    pause
+    exit /b 1
 )
 goto :end
 

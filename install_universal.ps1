@@ -14,16 +14,14 @@ $arch = $env:PROCESSOR_ARCHITECTURE
 Write-Host "Detected architecture: $arch" -ForegroundColor Yellow
 
 if ($ARM64 -or $arch -eq "ARM64") {
-    Write-Host "Installing ARM64 version..." -ForegroundColor Cyan
+    Write-Host "Installing ARM64 version with NPU acceleration..." -ForegroundColor Cyan
 
     # ARM64 installation
     $armPath = "whispercpp_arm"
     if (!(Test-Path $armPath)) {
-        Write-Host "Downloading ARM64 setup..." -ForegroundColor Yellow
-        Invoke-WebRequest 'https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip' -OutFile repo.zip
-        Expand-Archive -Path repo.zip -DestinationPath . -Force
-        Move-Item -Force .\AudioProcessorAlphaVersion-main\whispercpp_arm .\ -ErrorAction SilentlyContinue
-        Remove-Item repo.zip -Force
+        Write-Host "ARM64 setup not found in repository." -ForegroundColor Red
+        Write-Host "Please ensure you're using the latest version from GitHub." -ForegroundColor Red
+        exit 1
     }
 
     Set-Location $armPath
@@ -39,8 +37,15 @@ if ($ARM64 -or $arch -eq "ARM64") {
     python -m pip install --upgrade pip
     python -m pip install -r requirements.txt
 
-    Write-Host "Launching ARM64 GUI..." -ForegroundColor Green
-    python gui_transcribe.py
+    Write-Host "ARM64 NPU Setup Complete!" -ForegroundColor Green
+    Write-Host "Your ARM64 device is now configured with NPU acceleration!" -ForegroundColor Green
+    Write-Host "" -ForegroundColor White
+    Write-Host "To launch the GUI:" -ForegroundColor Cyan
+    Write-Host "  cd whispercpp_arm" -ForegroundColor White
+    Write-Host "  python gui_transcribe.py" -ForegroundColor White
+    Write-Host "" -ForegroundColor White
+    Write-Host "The GUI will show 'Whisper.cpp ARM64 Transcription (NPU Accelerated)'" -ForegroundColor Green
+    Write-Host "" -ForegroundColor White
 
 } elseif ($arch -eq "AMD64") {
     Write-Host "Installing x64 version..." -ForegroundColor Cyan
