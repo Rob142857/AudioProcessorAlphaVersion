@@ -33,6 +33,14 @@ __pycache__/
 !ffmpeg.exe
 !ffmpeg.bat
 
+# AI Model files (large binary files - download separately)
+*.bin
+models/*.bin
+whispercpp_arm/models/*.bin
+*.ggml
+models/*.ggml
+whispercpp_arm/models/*.ggml
+
 # OS files
 .DS_Store
 Thumbs.db
