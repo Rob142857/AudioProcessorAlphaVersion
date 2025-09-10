@@ -15,16 +15,10 @@ import sys
 import subprocess
 from typing import Optional, List
 
-try:
-    import tkinter as tk
-    from tkinter import ttk, filedialog, messagebox
-    TKINTER_AVAILABLE = True
-except Exception:
-    tk = None
-    ttk = None
-    filedialog = None
-    messagebox = None
-    TKINTER_AVAILABLE = False
+# GUI toolkit
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+TKINTER_AVAILABLE = True
 
 # Supported file extensions for batch processing
 SUPPORTED_EXTS = (
@@ -41,6 +35,56 @@ def run_transcription(input_file: str, outdir: Optional[str], output_queue: queu
     Output directory defaults to the source file directory if not provided.
     """
     try:
+        # Memory cleanup BEFORE processing each file
+        print("🧹 Performing memory cleanup before file processing...")
+        try:
+            import gc
+            import psutil
+            import torch
+            import sys
+
+            # Force garbage collection
+            collected = gc.collect()
+            print(f"   Garbage collected: {collected} objects")
+
+            # Clear GPU cache if available
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()  # Ensure all operations complete
+                print("   GPU cache cleared")
+
+            # Clear any cached modules that might be holding memory (exclude torch)
+            modules_to_clear = []
+            for module_name in sys.modules:
+                if module_name.startswith(('whisper', 'transformers')):
+                    modules_to_clear.append(module_name)
+
+            for module_name in modules_to_clear:
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
+                    print(f"   Cleared cached module: {module_name}")
+
+            # Force another garbage collection
+            collected2 = gc.collect()
+            print(f"   Additional garbage collected: {collected2} objects")
+
+            # Monitor memory usage
+            process = psutil.Process(os.getpid())
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / 1024 / 1024
+            print(f"   Memory usage before processing: {memory_mb:.1f} MB")
+
+            if torch.cuda.is_available():
+                try:
+                    gpu_memory = torch.cuda.memory_allocated() / 1024**3
+                    print(f"   GPU memory before processing: {gpu_memory:.1f} GB")
+                except:
+                    pass
+
+        except ImportError:
+            print("   Memory cleanup skipped (missing dependencies)")
+        except Exception as e:
+            print(f"   Memory cleanup warning: {e}")
         # Import and run the transcription
         from transcribe_optimised import transcribe_file_simple_auto
 
@@ -62,6 +106,69 @@ def run_transcription(input_file: str, outdir: Optional[str], output_queue: queu
 
     except Exception as e:
         output_queue.put("Transcription failed: {}\n".format(e))
+        import traceback
+        output_queue.put("Error details: {}\n".format(traceback.format_exc()))
+
+    finally:
+        # Memory cleanup AFTER processing each file
+        print("🧹 Performing memory cleanup after file processing...")
+        try:
+            import gc
+            import psutil
+            import torch
+            import sys
+
+            # Force garbage collection
+            collected = gc.collect()
+            print(f"   Post-processing garbage collected: {collected} objects")
+
+            # Clear GPU cache aggressively
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                print("   GPU cache cleared after processing")
+
+                # Force release of any remaining GPU memory
+                try:
+                    torch.cuda.empty_cache()
+                    if torch.cuda.memory_allocated() > 0:
+                        print("   Warning: Some GPU memory still allocated")
+                except:
+                    pass
+
+            # Clear cached modules again (exclude torch)
+            modules_to_clear = []
+            for module_name in sys.modules:
+                if module_name.startswith(('whisper', 'transformers')):
+                    modules_to_clear.append(module_name)
+
+            for module_name in modules_to_clear:
+                if module_name in sys.modules:
+                    try:
+                        del sys.modules[module_name]
+                        print(f"   Cleared cached module: {module_name}")
+                    except:
+                        pass  # Some modules can't be deleted
+
+            # Final garbage collection
+            collected_final = gc.collect()
+            print(f"   Final garbage collected: {collected_final} objects")
+
+            # Monitor final memory usage
+            process = psutil.Process(os.getpid())
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / 1024 / 1024
+            print(f"   Memory usage after processing: {memory_mb:.1f} MB")
+
+            if torch.cuda.is_available():
+                try:
+                    gpu_memory = torch.cuda.memory_allocated() / 1024**3
+                    print(f"   GPU memory after processing: {gpu_memory:.1f} GB")
+                except:
+                    pass
+
+        except Exception as e:
+            print(f"   Post-processing cleanup warning: {e}")
 
 
 def run_batch_transcription(paths: List[str], outdir_override: Optional[str], output_queue: queue.Queue):
@@ -111,6 +218,9 @@ def launch_gui(default_outdir: Optional[str] = None):
         print("Tkinter is not available in this Python build.")
         return
 
+    # Help static analyzers: ensure tkinter symbols are non-None beyond this point
+    assert tk is not None and ttk is not None and filedialog is not None and messagebox is not None
+
     # Memory cleanup on GUI launch
     memory_cleanup_info = []
     print("Performing memory cleanup...")
@@ -131,11 +241,11 @@ def launch_gui(default_outdir: Optional[str] = None):
         print(f"Current memory usage: {memory_mb:.1f} MB")
         memory_cleanup_info.append(f"Current memory usage: {memory_mb:.1f} MB")
 
-        # Clear any cached imports that might be holding memory
+        # Clear any cached imports that might be holding memory (exclude torch)
         import sys
         modules_to_clear = []
         for module_name in sys.modules:
-            if module_name.startswith(('whisper', 'torch', 'transformers')):
+            if module_name.startswith(('whisper', 'transformers')):
                 modules_to_clear.append(module_name)
 
         for module_name in modules_to_clear:
@@ -241,6 +351,7 @@ def launch_gui(default_outdir: Optional[str] = None):
         input_entry.grid(column=0, row=1, columnspan=2, sticky="ew", padx=20, pady=(0, 20))
 
         def browse_input():
+            import os
             filetypes = [
                 ("Audio files", "*.mp3 *.wav *.flac *.m4a *.aac *.ogg *.wma"),
                 ("Video files", "*.mp4 *.avi *.mkv *.mov *.wmv *.flv *.webm"),
@@ -252,6 +363,7 @@ def launch_gui(default_outdir: Optional[str] = None):
                 status_label.config(text="Selected file: {}".format(os.path.basename(p)), foreground='#059669')
 
         def browse_folder():
+            import os
             d = filedialog.askdirectory(title="Select folder for batch processing")
             if d:
                 input_var.set(d)
@@ -411,6 +523,7 @@ Full Audio Capture (All Content Preserved)"""
         def start_transcription_thread():
             # Debug: print to stderr so it doesn't interfere with stdout redirection
             import sys
+            import os
             print("DEBUG: start_transcription_thread called", file=sys.__stderr__)
 
             inp = input_var.get().strip()
@@ -437,6 +550,7 @@ Full Audio Capture (All Content Preserved)"""
 
             def worker():
                 import sys
+                import os
                 try:
                     # Send initial status message
                     q.put("Initializing transcription process...\n")
