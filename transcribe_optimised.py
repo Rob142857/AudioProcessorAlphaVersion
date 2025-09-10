@@ -36,7 +36,21 @@ def get_maximum_hardware_config():
     torch_api = cast(Any, torch)
     cpu_cores = max(multiprocessing.cpu_count(), 1)
     total_ram_gb = psutil.virtual_memory().total / (1024 ** 3)
-    usable_ram_gb = max(total_ram_gb * 0.8, 1.0)  # keep headroom
+    # Default: 80% of total RAM
+    usable_ram_gb = max(total_ram_gb * 0.8, 1.0)
+    # RAM overrides via env: prefer absolute GB then fraction
+    try:
+        env_ram_gb = float(os.environ.get("TRANSCRIBE_RAM_GB", "") or 0)
+    except Exception:
+        env_ram_gb = 0.0
+    try:
+        env_ram_frac = float(os.environ.get("TRANSCRIBE_RAM_FRACTION", "") or 0)
+    except Exception:
+        env_ram_frac = 0.0
+    if env_ram_gb > 0:
+        usable_ram_gb = max(1.0, min(total_ram_gb, env_ram_gb))
+    elif 0.05 <= env_ram_frac <= 1.0:
+        usable_ram_gb = max(1.0, total_ram_gb * env_ram_frac)
 
     devices = ["cpu"]
     has_cuda = False
@@ -83,6 +97,22 @@ def get_maximum_hardware_config():
     # For stability, use 1 GPU worker. Loading multiple large models wastes VRAM for a single-file run.
     gpu_workers = 1 if has_cuda or dml_available else 0
 
+    # VRAM overrides via env
+    try:
+        env_vram_gb = float(os.environ.get("TRANSCRIBE_VRAM_GB", "") or 0)
+    except Exception:
+        env_vram_gb = 0.0
+    try:
+        env_vram_frac = float(os.environ.get("TRANSCRIBE_VRAM_FRACTION", "") or 0)
+    except Exception:
+        env_vram_frac = 0.0
+    allowed_vram_gb = cuda_total_vram_gb
+    if cuda_total_vram_gb > 0:
+        if env_vram_gb > 0:
+            allowed_vram_gb = max(0.5, min(cuda_total_vram_gb, env_vram_gb))
+        elif 0.05 <= env_vram_frac <= 1.0:
+            allowed_vram_gb = max(0.5, cuda_total_vram_gb * env_vram_frac)
+
     cfg = {
         "cpu_cores": cpu_cores,
         "cpu_threads": cpu_threads,
@@ -92,7 +122,8 @@ def get_maximum_hardware_config():
         "gpu_workers": gpu_workers,
         "total_workers": max(cpu_threads, gpu_workers),
         "dml_available": dml_available,
-    "cuda_total_vram_gb": cuda_total_vram_gb,
+        "cuda_total_vram_gb": cuda_total_vram_gb,
+        "allowed_vram_gb": allowed_vram_gb,
     }
     return cfg
 
@@ -181,6 +212,16 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
             chosen_device = "cuda"
             device_name = f"CUDA GPU ({torch_api.cuda.get_device_name(0)})"
             print("🎯 Device: CUDA GPU")
+            # Apply CUDA per-process memory fraction if an allowed VRAM cap is set
+            try:
+                total_vram = float(config.get("cuda_total_vram_gb") or 0.0)
+                allowed_vram = float(config.get("allowed_vram_gb") or 0.0)
+                if total_vram > 0 and 0.5 <= allowed_vram < total_vram:
+                    frac = max(0.05, min(0.95, allowed_vram / total_vram))
+                    torch_api.cuda.set_per_process_memory_fraction(frac, device=0)
+                    print(f"🧩 Limiting CUDA allocator to ~{frac*100:.0f}% of VRAM ({allowed_vram:.1f}GB)")
+            except Exception as e:
+                print(f"⚠️  Could not set CUDA memory fraction: {e}")
             model = whisper.load_model("large", device="cuda")
         elif config.get("dml_available", False):
             try:
@@ -226,7 +267,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     # Choose batch size based on device resources
     def _choose_batch_size(dev: str) -> int:
         if dev == "cuda":
-            vram = float(config.get("cuda_total_vram_gb") or 0.0)
+            vram = float(config.get("allowed_vram_gb") or (config.get("cuda_total_vram_gb") or 0.0))
             if vram >= 12:
                 return 48
             if vram >= 8:
@@ -507,11 +548,42 @@ def main():
     parser.add_argument("--output-dir", help="Output directory (default: Downloads)")
     parser.add_argument("--threads", type=int, help="Override CPU threads for PyTorch/OMP/MKL")
     parser.add_argument("--batch-size", type=int, help="Override inference batch size")
+    parser.add_argument("--ram-gb", type=float, help="Override usable RAM in GB (default: auto)")
+    parser.add_argument("--ram-fraction", type=float, help="Override usable RAM as fraction (0.0-1.0, default: auto)")
+    parser.add_argument("--vram-gb", type=float, help="Override usable VRAM in GB (default: auto)")
+    parser.add_argument("--vram-fraction", type=float, help="Override usable VRAM as fraction (0.0-1.0, default: auto)")
+    parser.add_argument("--ram-gb", type=float, help="Cap usable system RAM in GB for planning (env TRANSCRIBE_RAM_GB)")
+    parser.add_argument("--ram-frac", type=float, help="Cap usable system RAM as fraction 0-1 (env TRANSCRIBE_RAM_FRACTION)")
+    parser.add_argument("--vram-gb", type=float, help="Cap usable CUDA VRAM in GB for planning (env TRANSCRIBE_VRAM_GB)")
+    parser.add_argument("--vram-frac", type=float, help="Cap usable CUDA VRAM as fraction 0-1 (env TRANSCRIBE_VRAM_FRACTION)")
     args = parser.parse_args()
 
     if not os.path.isfile(args.input):
         print(f"Error: Input file not found: {args.input}")
         return 1
+
+    # Apply env overrides for RAM/VRAM if provided
+    try:
+        if getattr(args, "ram_gb", None):
+            os.environ["TRANSCRIBE_RAM_GB"] = str(max(1.0, float(args.ram_gb)))
+        if getattr(args, "ram_frac", None):
+            os.environ["TRANSCRIBE_RAM_FRACTION"] = str(max(0.05, min(1.0, float(args.ram_frac))))
+        if getattr(args, "vram_gb", None):
+            os.environ["TRANSCRIBE_VRAM_GB"] = str(max(0.5, float(args.vram_gb)))
+        if getattr(args, "vram_frac", None):
+            os.environ["TRANSCRIBE_VRAM_FRACTION"] = str(max(0.05, min(1.0, float(args.vram_frac))))
+    except Exception:
+        pass
+
+    # Set RAM/VRAM overrides via env if provided
+    if getattr(args, "ram_gb", None) is not None:
+        os.environ["TRANSCRIBE_RAM_GB"] = str(args.ram_gb)
+    if getattr(args, "ram_fraction", None) is not None:
+        os.environ["TRANSCRIBE_RAM_FRACTION"] = str(args.ram_fraction)
+    if getattr(args, "vram_gb", None) is not None:
+        os.environ["TRANSCRIBE_VRAM_GB"] = str(args.vram_gb)
+    if getattr(args, "vram_fraction", None) is not None:
+        os.environ["TRANSCRIBE_VRAM_FRACTION"] = str(args.vram_fraction)
 
     try:
         transcribe_file_simple_auto(
