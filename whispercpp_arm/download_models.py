@@ -3,14 +3,14 @@ import sys
 import urllib.request
 import shutil
 
-WHISPER_MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large.bin"
+WHISPER_MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
 PUNCTUATION_MODEL_URL = "https://huggingface.co/oliverguhr/fullstop-punctuation-multilang-large/resolve/main/model.onnx"
 MODELS_DIR = "models"
 
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 models = [
-    (WHISPER_MODEL_URL, os.path.join(MODELS_DIR, "ggml-large.bin")),
+    (WHISPER_MODEL_URL, os.path.join(MODELS_DIR, "ggml-large-v3-turbo.bin")),
     (PUNCTUATION_MODEL_URL, os.path.join(MODELS_DIR, "punctuation.onnx")),
 ]
 

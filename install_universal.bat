@@ -41,6 +41,9 @@ if exist "whispercpp_arm" (
     python -m pip install --upgrade pip
     python -m pip install -r requirements.txt
 
+    echo Downloading ARM64 models...
+    python download_ggml_model.py
+
     echo.
     echo === ARM64 NPU Setup Complete ===
     echo Your ARM64 device is now configured with NPU acceleration!

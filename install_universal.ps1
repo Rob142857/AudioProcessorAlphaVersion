@@ -37,6 +37,9 @@ if ($ARM64 -or $arch -eq "ARM64") {
     python -m pip install --upgrade pip
     python -m pip install -r requirements.txt
 
+    Write-Host "Downloading ARM64 models..." -ForegroundColor Yellow
+    python download_ggml_model.py
+
     Write-Host "ARM64 NPU Setup Complete!" -ForegroundColor Green
     Write-Host "Your ARM64 device is now configured with NPU acceleration!" -ForegroundColor Green
     Write-Host "" -ForegroundColor White
