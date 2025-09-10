@@ -201,16 +201,35 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
             print("🔄 Starting Whisper transcription process...")
             if model is None:
                 raise RuntimeError("Whisper model is not loaded")
-            result = model.transcribe(
-                input_path,
-                language=None,
-                compression_ratio_threshold=2.4,
-                logprob_threshold=-2.0,
-                no_speech_threshold=0.3,
-                condition_on_previous_text=False,
-                temperature=0.0,
-                verbose=True,
-            )
+            # Prefer a light VAD filter when supported to avoid music-only hallucinations
+            try:
+                result = model.transcribe(
+                    input_path,
+                    language=None,
+                    compression_ratio_threshold=2.4,
+                    logprob_threshold=-2.0,
+                    no_speech_threshold=0.3,
+                    condition_on_previous_text=False,
+                    temperature=0.0,
+                    verbose=True,
+                    vad_filter=True,  # available in newer openai-whisper builds
+                    vad_parameters={
+                        "vad_onset": 0.6,   # be conservative about what counts as speech
+                        "vad_offset": 0.4,
+                    },
+                )
+            except TypeError:
+                # Older whisper without vad_filter support
+                result = model.transcribe(
+                    input_path,
+                    language=None,
+                    compression_ratio_threshold=2.4,
+                    logprob_threshold=-2.0,
+                    no_speech_threshold=0.3,
+                    condition_on_previous_text=False,
+                    temperature=0.0,
+                    verbose=True,
+                )
             transcription_result = result
             print("✅ Whisper transcription completed successfully")
         except Exception as e:
@@ -267,15 +286,60 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
     if transcription_error:
         raise Exception(f"Transcription failed: {transcription_error}")
 
-    # Extract text
+    # Extract text (with artifact suppression around music)
     result = transcription_result
+    full_text = ""
+    removed_segments = []
+    kept_count = 0
     if isinstance(result, dict):
-        text_result = result.get("text", "")
-        full_text = text_result.strip() if isinstance(text_result, str) else str(text_result).strip()
+        segments = result.get("segments")
+        if isinstance(segments, list) and segments:
+            def _is_suspicious_music_artifact(seg_text: str) -> bool:
+                t = (seg_text or "").lower()
+                if "©" in seg_text or "(c)" in t or "copyright" in t:
+                    return True
+                markers = [
+                    "bf-watch", "watch tv", "bfwatch", "all rights reserved",
+                    "www.", "http://", "https://",
+                ]
+                return any(m in t for m in markers)
+
+            cleaned_parts = []
+            for seg in segments:
+                seg_text = str(seg.get("text", "")).strip()
+                avg_logprob = seg.get("avg_logprob", 0.0)
+                no_speech_prob = seg.get("no_speech_prob", 0.0)
+
+                suspicious = _is_suspicious_music_artifact(seg_text)
+                low_confidence = (isinstance(avg_logprob, (int, float)) and avg_logprob < -0.5) or \
+                                 (isinstance(no_speech_prob, (int, float)) and no_speech_prob > 0.6)
+
+                if seg_text and not (suspicious and low_confidence):
+                    cleaned_parts.append(seg_text)
+                    kept_count += 1
+                else:
+                    if seg_text:
+                        removed_segments.append({
+                            "text": seg_text[:120],
+                            "avg_logprob": avg_logprob,
+                            "no_speech_prob": no_speech_prob,
+                            "start": seg.get("start"),
+                            "end": seg.get("end"),
+                        })
+            full_text = (" ".join(cleaned_parts)).strip()
+        else:
+            text_result = result.get("text", "")
+            full_text = text_result.strip() if isinstance(text_result, str) else str(text_result).strip()
     elif isinstance(result, list) and result:
         full_text = str(result[0]).strip()
     else:
         full_text = ""
+
+    if removed_segments:
+        print(f"🧽 Artifact filter removed {len(removed_segments)} low-confidence watermark-like segment(s) during music.")
+        # Show a brief preview for diagnostics
+        sample = removed_segments[0]
+        print(f"   e.g., '{sample['text']}' (avg_logprob={sample['avg_logprob']}, no_speech_prob={sample['no_speech_prob']})")
 
     if not full_text:
         print("⚠️  Warning: No transcription text generated")
