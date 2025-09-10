@@ -7,6 +7,13 @@ High‑quality local transcription using the Large Whisper model. Outputs .txt a
 - ffmpeg on PATH
 
 ## Install
+
+Quick install (PowerShell one‑liner):
+```powershell
+irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex
+```
+
+Local script runner:
 ```powershell
 ./run.bat
 ```
@@ -44,6 +51,21 @@ python gui_transcribe.py
 Headless (save next to source):
 ```powershell
 python gui_transcribe.py --input "C:\path\to\file.mp4" --outdir "$env:USERPROFILE\Downloads" --threads 16 --ram-gb 8 --vram-fraction 0.75
+```
+
+### WhisperCPP (CPU‑only, fast path, x64)
+- GUI (includes a CPU Threads field to override auto):
+```powershell
+python gui_transcribe_whispercpp.py
+```
+- Headless with manual threads override (default auto uses ~90% of logical cores):
+```powershell
+python gui_transcribe_whispercpp.py --input "C:\path\to\file.mp3" --threads 16
+```
+- Environment override:
+```powershell
+$env:WHISPERCPP_THREADS = '16'
+python gui_transcribe_whispercpp.py
 ```
 
 ## Performance knobs
