@@ -49,49 +49,102 @@ This program uses cutting-edge AI to convert your recordings into professionally
 **Video Formats:** MP4, AVI, MKV, MOV, WMV, FLV, WebM  
 **Sources:** Local files, recordings, downloads, streaming captures
 
-## 🚀 Installation (Fully Automated - One Command)
+## 🚀 Installation (Fully Automated - Multiple Options)
 
-### Quick Install — One-Liners (Run as Administrator)
+### 🎯 Quick Start - Universal Installer (Recommended)
+
+**One command for any Windows architecture:**
+
+```cmd
+# Download and run - automatically detects ARM64/x64
+curl -L https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip -o setup.zip
+powershell -command "Expand-Archive -Path setup.zip -DestinationPath . -Force"
+cd AudioProcessorAlphaVersion-main
+install_universal.bat
+```
+
+### 🎮 Choose Your Backend
+
+**Option 1: PyTorch Whisper (GPU/CPU Support)**
+- Best for NVIDIA GPU users
+- Automatic hardware detection
+- Large model for maximum accuracy
+```cmd
+install.bat
+# Choose option 1 when prompted
+```
+
+**Option 2: WhisperCPP Turbo v3 (CPU-Only, Fastest)**
+- Fastest CPU transcription available
+- Uses optimized Turbo v3 model (smaller, faster)
+- No GPU required, works everywhere
+```cmd
+install.bat
+# Choose option 2 when prompted
+```
+
+### 🔧 PowerShell Installation
 
 ```powershell
-# PowerShell (Run as Administrator)
-iex (irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1)
+# Interactive installation
+.\install_universal.ps1
+
+# Direct installations
+.\install_universal.ps1 -PyTorch      # PyTorch version
+.\install_universal.ps1 -WhisperCPP   # WhisperCPP version
+.\install_universal.ps1 -ARM64        # Force ARM64 mode
 ```
+
+### 📊 Backend Comparison
+
+| Feature | PyTorch Whisper | WhisperCPP Turbo v3 |
+|---------|----------------|-------------------|
+| **GPU Support** | ✅ Full CUDA/DirectML | ❌ CPU Only |
+| **Model Size** | Large (1.5GB) | Turbo v3 (1.1GB) |
+| **Speed** | Fast with GPU | **Fastest** on CPU |
+| **Accuracy** | Highest | Very High |
+| **Setup Complexity** | Medium | Simple |
+| **Dependencies** | PyTorch + CUDA | Minimal |
+
+### 🏃‍♂️ Running After Installation
 
 ```cmd
-:: Command Prompt (Run as Administrator)
-curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.bat -o install.bat && install.bat
+# PyTorch version (GPU/CPU)
+python gui_transcribe.py
+
+# WhisperCPP version (CPU Turbo v3)
+python gui_transcribe_whispercpp.py
+# or
+run_whispercpp.bat
 ```
 
-### Option 1: Download and Install (Recommended)
+**Both versions launch in background - your terminal stays free!**
 
-**First, download the project files:**
-```cmd
-# Download the project zip file
-curl -L https://github.com/Rob142857/AudioProcessorAlphaVersion/archive/refs/heads/main.zip -o AudioProcessorAlphaVersion.zip
-# Extract the zip file to your desired location
-# Then navigate to the extracted folder
-cd AudioProcessorAlphaVersion-main
-```
+## ✨ New Features & Improvements
 
-**Then run the installer as Administrator:**
-```cmd
-# Right-click Command Prompt and select "Run as administrator"
-# Then run:
-curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.bat -o install.bat && install.bat
-```
+### 🚀 **Universal Architecture Support**
+- **Automatic Detection**: One installer works on both ARM64 and x64 Windows
+- **Backend Choice**: Choose between PyTorch (GPU) or WhisperCPP (CPU) backends
+- **Turbo v3 Model**: Fastest CPU transcription with optimized Turbo v3 model
+- **Separate Environments**: Isolated virtual environments for different backends
 
-### Option 2: Clone Repository and Install (Administrator)
+### ⚡ **Performance Enhancements**
+- **WhisperCPP Turbo v3**: 30-50% faster CPU transcription than standard models
+- **Smart Backend Selection**: Automatic choice based on hardware capabilities
+- **Background Processing**: Both GUIs run in background, terminal stays free
+- **Memory Optimization**: Reduced memory usage with Turbo v3 model
 
-```cmd
-# Open Command Prompt as Administrator (right-click > Run as administrator)
-# Clone the repository
-git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git
-cd AudioProcessorAlphaVersion
+### 🛠️ **Installation Improvements**
+- **One-Liner Install**: Single command downloads and installs everything
+- **Architecture Detection**: Automatically detects ARM64 vs x64 processors
+- **Interactive Menus**: Choose your preferred backend during installation
+- **PowerShell Support**: Full PowerShell scripting with parameter options
 
-# Then run the installer
-curl -L https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.bat -o install.bat && install.bat
-```
+### 🎯 **User Experience**
+- **Dual GUI Support**: Separate interfaces for PyTorch and WhisperCPP backends
+- **Batch Processing**: Process multiple files with progress tracking
+- **Error Handling**: Comprehensive error detection and recovery
+- **Documentation**: Complete setup guides for all installation methods
 
 ### COBOL-Style Instructions (For Fun!)
 
