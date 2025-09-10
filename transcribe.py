@@ -46,25 +46,93 @@ def format_duration(seconds):
 
 
 def split_into_paragraphs(text, max_length=500):
-    paras = []
-    current = []
-    count = 0
-    for line in text.split("\n"):
-        if line.strip() == "":
-            if current:
-                paras.append(" ".join(current).strip())
-                current = []
-                count = 0
-        else:
-            current.append(line.strip())
-            count += len(line)
-            if count > max_length:
-                paras.append(" ".join(current).strip())
-                current = []
-                count = 0
-    if current:
-        paras.append(" ".join(current).strip())
-    return paras
+    """Richer paragraphing heuristics:
+    - Treat blank lines as hard paragraph breaks.
+    - Within a block, split into sentences (., !, ?) while respecting common abbreviations and initials.
+    - Group 2–5 sentences or until ~800 chars per paragraph.
+    - Preserve bullet/numbered lines as their own paragraphs.
+    """
+    if not text:
+        return []
+
+    # Hard breaks by blank lines
+    blocks = re.split(r"\n\s*\n+", text)
+
+    # Common abbreviations to avoid splitting on
+    abbreviations = {
+        "Mr.", "Mrs.", "Ms.", "Dr.", "Prof.", "Sr.", "Jr.", "St.",
+        "vs.", "etc.", "e.g.", "i.e.", "cf.", "Co.", "Corp.", "Inc.", "Ltd.",
+        "U.S.", "U.K.", "No.", "Mt.", "Rd.", "Ave.", "Jan.", "Feb.", "Mar.",
+        "Apr.", "Aug.", "Sept.", "Oct.", "Nov.", "Dec."
+    }
+
+    bullet_re = re.compile(r"^\s*(?:[-*•]\s+|\d+[\.)]\s+)")
+    # Sentence split (rough): break after ., !, ? followed by whitespace and a capital/quote/open paren
+    sentence_split_re = re.compile(r"(?<=[.!?])[\)]?\"?'?\s+(?=[\"'\(A-Z0-9])")
+
+    def is_abbrev_end(s: str) -> bool:
+        s = s.strip()
+        if not s:
+            return False
+        last = s.split()[-1]
+        if last in abbreviations:
+            return True
+        # Single-letter initial (e.g., "J.")
+        if re.match(r"^[A-Z]\.$", last):
+            return True
+        # Ellipses
+        if s.endswith("..."):
+            return True
+        return False
+
+    paragraphs = []
+
+    for block in blocks:
+        if not block.strip():
+            continue
+
+        # If block looks like bullets or numbered list, keep each line as a paragraph
+        lines = block.splitlines()
+        if any(bullet_re.match(ln) for ln in lines):
+            for ln in lines:
+                ln = ln.strip()
+                if ln:
+                    paragraphs.append(ln)
+            continue
+
+        # Collapse internal newlines to single spaces for sentence processing
+        block_text = re.sub(r"\s+", " ", block.strip())
+        # Initial naive split
+        parts = sentence_split_re.split(block_text)
+        # Merge sentences that were split after abbreviations or initials
+        sentences = []
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            if sentences and (is_abbrev_end(sentences[-1]) or len(sentences[-1]) <= 2):
+                sentences[-1] = (sentences[-1] + " " + part).strip()
+            else:
+                sentences.append(part)
+
+        # Group into paragraphs by sentence count and char budget
+        cur = []
+        cur_len = 0
+        max_chars_per_para = 800
+        max_sentences_per_para = 5
+
+        for s in sentences:
+            # Start new para if adding would exceed limits
+            if cur and (len(s) + cur_len > max_chars_per_para or len(cur) >= max_sentences_per_para):
+                paragraphs.append(" ".join(cur).strip())
+                cur = []
+                cur_len = 0
+            cur.append(s)
+            cur_len += len(s) + 1
+        if cur:
+            paragraphs.append(" ".join(cur).strip())
+
+    return paragraphs
 
 
 def convert_to_mp3(input_path, bitrate="192k"):
@@ -426,6 +494,26 @@ def transcribe_file(input_path, model_name="large", preprocess=True, keep_temp=F
         except Exception as e:
             print(f"Failed to write log file: {e}")
 
+        # Memory cleanup between files to prevent accumulation
+        print("🧹 Cleaning up memory and GPU cache...")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        import gc
+        gc.collect()
+        
+        # Monitor memory after cleanup
+        import psutil
+        memory_after = psutil.virtual_memory()
+        if torch.cuda.is_available():
+            try:
+                gpu_memory_after = torch.cuda.memory_allocated() / (1024**3)
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available, GPU {gpu_memory_after:.1f}GB used")
+            except:
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
+        else:
+            print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
+
     finally:
         if not keep_temp:
             for p in temp_files:
@@ -733,6 +821,26 @@ def transcribe_file_no_vad(input_path, model_name="large", preprocess=True, keep
             print(f"Log written to {log_path}")
         except Exception as e:
             print(f"Failed to write log file: {e}")
+
+        # Memory cleanup between files to prevent accumulation
+        print("🧹 Cleaning up memory and GPU cache...")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        import gc
+        gc.collect()
+        
+        # Monitor memory after cleanup
+        import psutil
+        memory_after = psutil.virtual_memory()
+        if torch.cuda.is_available():
+            try:
+                gpu_memory_after = torch.cuda.memory_allocated() / (1024**3)
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available, GPU {gpu_memory_after:.1f}GB used")
+            except:
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
+        else:
+            print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
 
     finally:
         if not keep_temp:
@@ -1110,6 +1218,26 @@ def transcribe_lecture(input_path, model_name="large", preprocess=True, keep_tem
             print(f"Log written to {log_path}")
         except Exception as e:
             print(f"Failed to write log file: {e}")
+
+        # Memory cleanup between files to prevent accumulation
+        print("🧹 Cleaning up memory and GPU cache...")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        import gc
+        gc.collect()
+        
+        # Monitor memory after cleanup
+        import psutil
+        memory_after = psutil.virtual_memory()
+        if torch.cuda.is_available():
+            try:
+                gpu_memory_after = torch.cuda.memory_allocated() / (1024**3)
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available, GPU {gpu_memory_after:.1f}GB used")
+            except:
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
+        else:
+            print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
 
     finally:
         if not keep_temp:
