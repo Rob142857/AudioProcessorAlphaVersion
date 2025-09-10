@@ -40,10 +40,15 @@ def get_maximum_hardware_config():
 
     devices = ["cpu"]
     has_cuda = False
+    cuda_total_vram_gb = 0.0
     try:
         has_cuda = torch_api.cuda.is_available()
         if has_cuda:
             devices.insert(0, "cuda")
+            try:
+                cuda_total_vram_gb = torch_api.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            except Exception:
+                cuda_total_vram_gb = 0.0
     except Exception:
         has_cuda = False
 
@@ -58,8 +63,14 @@ def get_maximum_hardware_config():
     except Exception:
         dml_available = False
 
-    # Threads: cap to a sensible number to avoid oversubscription
-    cpu_threads = min(max(cpu_cores, 1), 16)
+    # Threads: be more aggressive but still bounded by RAM and practical limits
+    if usable_ram_gb >= 16:
+        cpu_threads = min(max(cpu_cores, 1), 32)
+    elif usable_ram_gb >= 8:
+        cpu_threads = min(max(cpu_cores, 1), 24)
+    else:
+        cpu_threads = min(max(cpu_cores, 1), 16)
+    cpu_threads = max(cpu_threads, 4)
 
     # For stability, use 1 GPU worker. Loading multiple large models wastes VRAM for a single-file run.
     gpu_workers = 1 if has_cuda or dml_available else 0
@@ -73,6 +84,7 @@ def get_maximum_hardware_config():
         "gpu_workers": gpu_workers,
         "total_workers": max(cpu_threads, gpu_workers),
         "dml_available": dml_available,
+    "cuda_total_vram_gb": cuda_total_vram_gb,
     }
     return cfg
 
@@ -185,9 +197,37 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
         device_name = f"CPU ({multiprocessing.cpu_count()} cores)"
         model = whisper.load_model("large", device="cpu")
 
-    # Set CPU threads
+    # Set CPU threads (& interop)
     torch_api.set_num_threads(config["cpu_threads"])
-    print(f"🧵 PyTorch threads set to: {config['cpu_threads']}")
+    try:
+        torch_api.set_num_interop_threads(max(2, min(8, config["cpu_threads"] // 4)))
+    except Exception:
+        pass
+    # Also hint MKL/OMP to use similar thread counts
+    try:
+        os.environ.setdefault("MKL_NUM_THREADS", str(config["cpu_threads"]))
+        os.environ.setdefault("OMP_NUM_THREADS", str(config["cpu_threads"]))
+    except Exception:
+        pass
+    print(f"🧵 PyTorch threads set to: {config['cpu_threads']} (interop≈{max(2, min(8, config['cpu_threads'] // 4))})")
+
+    # Choose batch size based on device resources
+    def _choose_batch_size(dev: str) -> int:
+        if dev == "cuda":
+            vram = float(config.get("cuda_total_vram_gb") or 0.0)
+            if vram >= 12:
+                return 48
+            if vram >= 8:
+                return 32
+            if vram >= 6:
+                return 24
+            return 16
+        if dev == "cpu":
+            return max(4, min(12, config["cpu_threads"] // 2))
+        # DirectML or others
+        return 16
+    batch_size = _choose_batch_size("cuda" if chosen_device == "cuda" else ("cpu" if chosen_device == "cpu" else "dml"))
+    print(f"📦 Inference batch size: {batch_size}")
 
     # Run transcription in a watchdog thread
     import threading
@@ -212,6 +252,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
                     condition_on_previous_text=False,
                     temperature=0.0,
                     verbose=True,
+                    batch_size=batch_size,
                     vad_filter=True,  # available in newer openai-whisper builds
                     vad_parameters={
                         "vad_onset": 0.6,   # be conservative about what counts as speech
@@ -229,6 +270,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
                     condition_on_previous_text=False,
                     temperature=0.0,
                     verbose=True,
+                    batch_size=batch_size,
                 )
             transcription_result = result
             print("✅ Whisper transcription completed successfully")
@@ -278,6 +320,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
                 condition_on_previous_text=False,
                 temperature=0.0,
                 verbose=True,
+                batch_size=max(4, min(12, config["cpu_threads"] // 2)),
             )
             transcription_error = None
         except Exception as cpu_e:
