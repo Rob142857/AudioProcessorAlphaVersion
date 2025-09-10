@@ -264,33 +264,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
         pass
     print(f"🧵 PyTorch threads set to: {config['cpu_threads']} (interop≈{max(2, min(8, config['cpu_threads'] // 4))})")
 
-    # Choose batch size based on device resources
-    def _choose_batch_size(dev: str) -> int:
-        if dev == "cuda":
-            vram = float(config.get("allowed_vram_gb") or (config.get("cuda_total_vram_gb") or 0.0))
-            if vram >= 12:
-                return 48
-            if vram >= 8:
-                return 32
-            if vram >= 6:
-                return 24
-            return 16
-        if dev == "cpu":
-            return max(4, min(12, config["cpu_threads"] // 2))
-        # DirectML or others
-        return 16
-    batch_size = _choose_batch_size("cuda" if chosen_device == "cuda" else ("cpu" if chosen_device == "cpu" else "dml"))
-    # Allow environment override for batch size
-    try:
-        env_bs = int(os.environ.get("TRANSCRIBE_BATCH_SIZE", "") or 0)
-    except Exception:
-        env_bs = 0
-    if env_bs > 0:
-        batch_size = max(1, min(128, env_bs))
-    # Explicit parameter override wins last
-    if isinstance(batch_size_override, int) and batch_size_override > 0:
-        batch_size = max(1, min(128, batch_size_override))
-    print(f"📦 Inference batch size: {batch_size}")
+    # Note: batch size is not passed to Whisper to ensure broad compatibility across versions
 
     # Run transcription in a watchdog thread
     import threading
@@ -304,37 +278,17 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
             print("🔄 Starting Whisper transcription process...")
             if model is None:
                 raise RuntimeError("Whisper model is not loaded")
-            # Prefer a light VAD filter when supported to avoid music-only hallucinations
-            try:
-                result = model.transcribe(
-                    input_path,
-                    language=None,
-                    compression_ratio_threshold=2.4,
-                    logprob_threshold=-2.0,
-                    no_speech_threshold=0.3,
-                    condition_on_previous_text=False,
-                    temperature=0.0,
-                    verbose=True,
-                    batch_size=batch_size,
-                    vad_filter=True,  # available in newer openai-whisper builds
-                    vad_parameters={
-                        "vad_onset": 0.6,   # be conservative about what counts as speech
-                        "vad_offset": 0.4,
-                    },
-                )
-            except TypeError:
-                # Older whisper without vad_filter support
-                result = model.transcribe(
-                    input_path,
-                    language=None,
-                    compression_ratio_threshold=2.4,
-                    logprob_threshold=-2.0,
-                    no_speech_threshold=0.3,
-                    condition_on_previous_text=False,
-                    temperature=0.0,
-                    verbose=True,
-                    batch_size=batch_size,
-                )
+            # Call transcribe without batch_size or vad_filter for broad compatibility
+            result = model.transcribe(
+                input_path,
+                language=None,
+                compression_ratio_threshold=2.4,
+                logprob_threshold=-2.0,
+                no_speech_threshold=0.3,
+                condition_on_previous_text=False,
+                temperature=0.0,
+                verbose=True,
+            )
             transcription_result = result
             print("✅ Whisper transcription completed successfully")
         except Exception as e:
@@ -383,7 +337,6 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
                 condition_on_previous_text=False,
                 temperature=0.0,
                 verbose=True,
-                batch_size=max(4, min(12, config["cpu_threads"] // 2)),
             )
             transcription_error = None
         except Exception as cpu_e:
