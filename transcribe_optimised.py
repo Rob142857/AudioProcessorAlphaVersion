@@ -117,7 +117,7 @@ def extract_segments_optimised(audio_path, segments, temp_dir, config):
         print(f"   Processing batch {batch_start//batch_size + 1}/{(total_segments + batch_size - 1) // batch_size} ({len(batch_args)} segments)")
         
         # Use conservative parallel processing for this batch
-        max_workers = min(3, len(batch_args))  # Limit to 3 workers max per batch
+        max_workers = min(6, len(batch_args))  # Increased from 3 to 6 workers max per batch
         
         try:
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -200,7 +200,7 @@ def get_maximum_hardware_config():
         print(f"   🎯 CUDA GPU: {gpu_name} ({gpu_memory:.1f}GB VRAM) x{gpu_count}")
         
         # Use maximum GPU workers for CUDA
-        gpu_workers = min(gpu_count * 2, 4)  # 2 workers per GPU, max 4 total
+        gpu_workers = min(gpu_count * 3, 8)  # Increased from 2 to 3 per GPU, max 8 total
     else:
         gpu_workers = 0
         print("   ❌ No CUDA GPU detected")
@@ -235,8 +235,12 @@ def get_maximum_hardware_config():
     # Use ALL CPU cores with RAM constraint
     cpu_threads = min(cpu_cores, max_cpu_threads_by_ram, 32)  # Cap at 32 threads
     
-    # Set PyTorch threads to maximum
-    torch.set_num_threads(cpu_threads)
+    # Enable GPU optimizations for better performance
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        print("🎯 GPU optimizations enabled: cuDNN benchmark, TF32 precision")
     
     print(f"\n� MAXIMUM RESOURCE CONFIGURATION:")
     print(f"   Devices: {', '.join(device_names)}")
@@ -595,6 +599,12 @@ def gpu_worker_process(args):
                 print(f"DEBUG: GPU Worker {worker_id} error: {e}", file=sys.__stderr__)
 
     print(f"DEBUG: GPU Worker {worker_id} returning {len(worker_results)} results", file=sys.__stderr__)
+    
+    # Final cleanup for this worker
+    torch.cuda.empty_cache()
+    import gc
+    gc.collect()
+    
     return worker_results
 
 def cpu_worker_process(args):
@@ -822,6 +832,25 @@ def transcribe_file_optimised(input_path, model_name="medium", output_dir=None, 
             speedup = duration / elapsed
             print(f"⚡ Final speed: {speedup:.1f}x realtime")
         
+        # Memory cleanup between files to prevent accumulation
+        print("🧹 Cleaning up memory and GPU cache...")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()  # Ensure all operations are complete
+        import gc
+        gc.collect()
+        
+        # Monitor memory after cleanup
+        memory_after = psutil.virtual_memory()
+        if torch.cuda.is_available():
+            try:
+                gpu_memory_after = torch.cuda.memory_allocated() / (1024**3)
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available, GPU {gpu_memory_after:.1f}GB used")
+            except:
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
+        else:
+            print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
+        
         return txt_path
         
     except Exception as e:
@@ -920,7 +949,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
             device_name = f"CPU ({config['cpu_cores']} cores)"
             
             # Load multiple CPU models for parallel processing
-            cpu_model_count = min(config["cpu_threads"] // 4, 4)  # 4 threads per model
+            cpu_model_count = min(config["cpu_threads"] // 2, 8)  # Increased from // 4 and max 4
             for i in range(max(cpu_model_count, 1)):
                 try:
                     model = whisper.load_model("large", device="cpu")
@@ -1108,6 +1137,25 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
         if duration:
             speedup = duration / elapsed
             print(f"⚡ Speed: {speedup:.1f}x realtime")
+        
+        # Memory cleanup between files to prevent accumulation
+        print("🧹 Cleaning up memory and GPU cache...")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()  # Ensure all operations are complete
+        import gc
+        gc.collect()
+        
+        # Monitor memory after cleanup
+        memory_after = psutil.virtual_memory()
+        if torch.cuda.is_available():
+            try:
+                gpu_memory_after = torch.cuda.memory_allocated() / (1024**3)
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available, GPU {gpu_memory_after:.1f}GB used")
+            except:
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
+        else:
+            print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
         
         return txt_path
         
