@@ -41,7 +41,7 @@ def run_whisper_cpp(audio_file, log_callback=None):
     out_prefix = str(out_dir / audio_file.stem)
     out_txt = str(out_dir / f"{audio_file.stem}.txt")
 
-    cmd = [WHISPER_CPP_PATH, "-m", MODEL_PATH, "-f", str(temp_path), "-otxt", "-of", out_prefix, "--language", "en", "--suppress-nst", "-nth", "0.0"]
+    cmd = [WHISPER_CPP_PATH, "-m", MODEL_PATH, "-f", str(temp_path), "-otxt", "-of", out_prefix, "--language", "en", "--suppress-nst", "-nth", "0.0", "-oved", "NPU"]
     exe_dir = Path(WHISPER_CPP_PATH).parent
     env = os.environ.copy()
     # Ensure the binary's folder is in PATH so dependent DLLs (ggml*.dll) are found
@@ -235,7 +235,7 @@ def _create_docx_from_txt(txt_path: Path, docx_path: Path):
 class TranscribeApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Whisper.cpp ARM64 Transcription")
+        self.root.title("Whisper.cpp ARM64 Transcription (NPU Accelerated)")
         self.root.geometry("600x400")  # Set a specific size
         self.file_list = []
         self.create_widgets()
