@@ -12,6 +12,12 @@ import queue
 import sys
 import subprocess
 from typing import Optional, List
+import math
+
+try:
+    import psutil  # for accurate CPU core detection
+except Exception:
+    psutil = None
 
 try:
     import tkinter as tk
@@ -33,7 +39,7 @@ WHISPER_CPP_EXE = "whisper-cli.exe"
 MODEL_PATH = "models/ggml-large-v3-turbo.bin"
 PUNCTUATION_MODEL = "punctuation.onnx"
 
-def run_whispercpp_transcription(input_file: str, outdir: Optional[str], output_queue: queue.Queue):
+def run_whispercpp_transcription(input_file: str, outdir: Optional[str], output_queue: queue.Queue, *, threads_override: Optional[int] = None):
     """Run transcription for a single file using WhisperCPP with turbo v3 model."""
     try:
         # Determine output directory
@@ -43,11 +49,42 @@ def run_whispercpp_transcription(input_file: str, outdir: Optional[str], output_
         output_queue.put("Starting WhisperCPP transcription for: {}\n".format(os.path.basename(input_file)))
         output_queue.put("Using Turbo v3 model (fast CPU processing)\n")
 
+        # Determine aggressive thread count for higher CPU utilization
+        env_thr = os.environ.get("WHISPERCPP_THREADS", "").strip()
+        threads = None
+
+        # 1) Explicit override from GUI/CLI wins
+        if isinstance(threads_override, int) and threads_override > 0:
+            threads = max(1, min(64, int(threads_override)))
+
+        # 2) Environment override
+        if threads is None and env_thr.isdigit():
+            try:
+                threads = max(1, min(64, int(env_thr)))
+            except Exception:
+                threads = None
+
+        # 3) Auto aggressive selection
+        if threads is None:
+            try:
+                logical = (psutil.cpu_count(logical=True) if psutil else None) or os.cpu_count() or 4
+                # Aim for ~90% of logical cores, leaving a little headroom for the UI / OS
+                threads = max(1, int(math.ceil(logical * 0.9)))
+                # Keep within sensible bounds
+                if logical >= 8:
+                    # leave at least 1 core free on bigger machines
+                    threads = min(threads, max(1, logical - 1))
+                threads = max(2, min(64, threads))
+            except Exception:
+                threads = 8
+        output_queue.put(f"Aggressive mode: using {threads} CPU threads (override via GUI Threads field or WHISPERCPP_THREADS)\n")
+
         # Build command for WhisperCPP
         cmd = [
             WHISPER_CPP_EXE,
             "-m", MODEL_PATH,
             "-f", input_file,
+            "-t", str(threads),
             "-otxt",
             "-of", os.path.join(target_outdir, base_name)
         ]
@@ -86,7 +123,7 @@ def run_whispercpp_transcription(input_file: str, outdir: Optional[str], output_
         output_queue.put("Transcription failed: {}\n".format(e))
 
 
-def run_batch_whispercpp_transcription(paths: List[str], outdir_override: Optional[str], output_queue: queue.Queue):
+def run_batch_whispercpp_transcription(paths: List[str], outdir_override: Optional[str], output_queue: queue.Queue, *, threads_override: Optional[int] = None):
     """Run batch transcription sequentially over provided file paths using WhisperCPP."""
     total = len(paths)
     output_queue.put("Batch mode: {} eligible files queued.\n".format(total))
@@ -96,7 +133,7 @@ def run_batch_whispercpp_transcription(paths: List[str], outdir_override: Option
     for idx, p in enumerate(paths, start=1):
         output_queue.put("\n[{} / {}] Processing: {}\n".format(idx, total, os.path.basename(p)))
         try:
-            run_whispercpp_transcription(p, outdir_override, output_queue)
+            run_whispercpp_transcription(p, outdir_override, output_queue, threads_override=threads_override)
             successful += 1
         except Exception as e:
             failed += 1
@@ -264,6 +301,16 @@ Full Audio Capture (All Content Preserved)"""
     settings_label.config(state=tk.DISABLED)
     settings_label.grid(column=0, row=0, sticky="ew")
 
+    # Simple overrides row: CPU Threads
+    overrides_frame = tk.Frame(settings_frame, bg='white')
+    overrides_frame.grid(column=0, row=1, sticky="ew", padx=20, pady=(0, 20))
+    overrides_frame.columnconfigure(1, weight=1)
+
+    tk.Label(overrides_frame, text="CPU Threads (optional):", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=0, row=0, sticky='w', pady=(5, 5))
+    threads_var = tk.StringVar(value="")
+    tk.Entry(overrides_frame, textvariable=threads_var, width=10, bg='#f9fafb', fg='#111827', relief='flat').grid(column=1, row=0, sticky='w', padx=(10, 0))
+    tk.Label(overrides_frame, text="Leave blank for Auto. Env: WHISPERCPP_THREADS.", bg='white', fg='#6b7280', font=('Segoe UI', 8)).grid(column=0, row=1, columnspan=2, sticky='w', pady=(6, 0))
+
     # Log area with modern design
     log_section_label = ttk.Label(mainframe, text="Activity Log", style='Section.TLabel')
     log_section_label.grid(column=0, row=5, columnspan=3, sticky="w", pady=(0, 15))
@@ -362,6 +409,17 @@ Full Audio Capture (All Content Preserved)"""
             try:
                 q.put("Initializing WhisperCPP transcription process...\n")
 
+                # Parse optional threads override
+                thr_override = None
+                try:
+                    tv = threads_var.get().strip()
+                    if tv:
+                        v = int(tv)
+                        if v > 0:
+                            thr_override = v
+                except Exception:
+                    thr_override = None
+
                 if os.path.isdir(inp):
                     files = []
                     try:
@@ -375,9 +433,9 @@ Full Audio Capture (All Content Preserved)"""
                     if not files:
                         q.put("No supported media files found in the selected folder.\n")
                     else:
-                        run_batch_whispercpp_transcription(files, outdir_override=None, output_queue=q)
+                        run_batch_whispercpp_transcription(files, outdir_override=None, output_queue=q, threads_override=thr_override)
                 else:
-                    run_whispercpp_transcription(inp, outdir=None, output_queue=q)
+                    run_whispercpp_transcription(inp, outdir=None, output_queue=q, threads_override=thr_override)
 
                 q.put("WhisperCPP transcription process finished!\n")
 
@@ -409,9 +467,12 @@ def main():
     parser = argparse.ArgumentParser(description="Speech to Text Transcription Tool v1.0Beta - WhisperCPP Version")
     parser.add_argument("--input", help="input audio/video file OR folder (if provided, runs headless)")
     parser.add_argument("--outdir", help="optional output folder override; defaults to saving next to source file(s)")
+    parser.add_argument("--threads", type=int, help="CPU threads to use for WhisperCPP (-t). Overrides auto and env.")
+    parser.add_argument("--gui", action="store_true", help="launch the GUI (used for background launch)")
     args = parser.parse_args()
 
     outdir = args.outdir or None
+    thr_override = args.threads if (args.threads is not None and args.threads > 0) else None
 
     if args.input:
         # Run headless
@@ -428,9 +489,9 @@ def main():
                 if not files:
                     q.put("No supported media files found in the provided folder.\n")
                 else:
-                    run_batch_whispercpp_transcription(files, outdir_override=outdir, output_queue=q)
+                    run_batch_whispercpp_transcription(files, outdir_override=outdir, output_queue=q, threads_override=thr_override)
             else:
-                run_whispercpp_transcription(p, outdir, q)
+                run_whispercpp_transcription(p, outdir, q, threads_override=thr_override)
 
         t = threading.Thread(target=runner)
         t.start()
@@ -441,6 +502,11 @@ def main():
                 print(msg, end="")
             except queue.Empty:
                 pass
+        return
+
+    # If explicitly asked for GUI, launch it in the current process
+    if args.gui:
+        launch_whispercpp_gui(default_outdir=outdir)
         return
 
     # Launch GUI in detached process
