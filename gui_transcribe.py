@@ -62,13 +62,27 @@ def run_batch_transcription(paths: List[str], outdir_override: Optional[str], ou
     """Run batch transcription sequentially over provided file paths.
 
     Each file is saved next to its source (unless outdir_override is provided).
+    Continues processing even if individual files fail.
     """
     total = len(paths)
     output_queue.put("Batch mode: {} eligible files queued.\n".format(total))
+    successful = 0
+    failed = 0
+
     for idx, p in enumerate(paths, start=1):
         output_queue.put("\n[{} / {}] Processing: {}\n".format(idx, total, os.path.basename(p)))
-        run_transcription(p, outdir_override, output_queue)
-    output_queue.put("\nBatch processing complete.\n")
+        try:
+            run_transcription(p, outdir_override, output_queue)
+            successful += 1
+        except Exception as e:
+            failed += 1
+            output_queue.put("Failed to process '{}': {}\n".format(os.path.basename(p), str(e)))
+            output_queue.put("Continuing with next file...\n")
+
+    output_queue.put("\nBatch processing complete!\n")
+    output_queue.put("Successfully processed: {} files\n".format(successful))
+    if failed > 0:
+        output_queue.put("Failed: {} files\n".format(failed))
 
 
 class QueueWriter:
