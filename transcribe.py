@@ -426,6 +426,26 @@ def transcribe_file(input_path, model_name="large", preprocess=True, keep_temp=F
         except Exception as e:
             print(f"Failed to write log file: {e}")
 
+        # Memory cleanup between files to prevent accumulation
+        print("🧹 Cleaning up memory and GPU cache...")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        import gc
+        gc.collect()
+        
+        # Monitor memory after cleanup
+        import psutil
+        memory_after = psutil.virtual_memory()
+        if torch.cuda.is_available():
+            try:
+                gpu_memory_after = torch.cuda.memory_allocated() / (1024**3)
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available, GPU {gpu_memory_after:.1f}GB used")
+            except:
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
+        else:
+            print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
+
     finally:
         if not keep_temp:
             for p in temp_files:
@@ -733,6 +753,26 @@ def transcribe_file_no_vad(input_path, model_name="large", preprocess=True, keep
             print(f"Log written to {log_path}")
         except Exception as e:
             print(f"Failed to write log file: {e}")
+
+        # Memory cleanup between files to prevent accumulation
+        print("🧹 Cleaning up memory and GPU cache...")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        import gc
+        gc.collect()
+        
+        # Monitor memory after cleanup
+        import psutil
+        memory_after = psutil.virtual_memory()
+        if torch.cuda.is_available():
+            try:
+                gpu_memory_after = torch.cuda.memory_allocated() / (1024**3)
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available, GPU {gpu_memory_after:.1f}GB used")
+            except:
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
+        else:
+            print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
 
     finally:
         if not keep_temp:
@@ -1110,6 +1150,26 @@ def transcribe_lecture(input_path, model_name="large", preprocess=True, keep_tem
             print(f"Log written to {log_path}")
         except Exception as e:
             print(f"Failed to write log file: {e}")
+
+        # Memory cleanup between files to prevent accumulation
+        print("🧹 Cleaning up memory and GPU cache...")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        import gc
+        gc.collect()
+        
+        # Monitor memory after cleanup
+        import psutil
+        memory_after = psutil.virtual_memory()
+        if torch.cuda.is_available():
+            try:
+                gpu_memory_after = torch.cuda.memory_allocated() / (1024**3)
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available, GPU {gpu_memory_after:.1f}GB used")
+            except:
+                print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
+        else:
+            print(f"📊 Memory after cleanup: RAM {memory_after.available / (1024**3):.1f}GB available")
 
     finally:
         if not keep_temp:
