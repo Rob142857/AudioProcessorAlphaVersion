@@ -13,7 +13,7 @@ import gc
 import psutil
 import argparse
 import multiprocessing
-from typing import Any, cast
+from typing import Any, cast, Optional
 
 # IMPORTANT: Import torch once at module import time. Do NOT delete torch.* from sys.modules.
 try:
@@ -72,6 +72,14 @@ def get_maximum_hardware_config():
         cpu_threads = min(max(cpu_cores, 1), 16)
     cpu_threads = max(cpu_threads, 4)
 
+    # Environment override for threads
+    try:
+        env_threads = int(os.environ.get("TRANSCRIBE_THREADS", "") or 0)
+    except Exception:
+        env_threads = 0
+    if env_threads > 0:
+        cpu_threads = max(1, min(64, env_threads))
+
     # For stability, use 1 GPU worker. Loading multiple large models wastes VRAM for a single-file run.
     gpu_workers = 1 if has_cuda or dml_available else 0
 
@@ -128,7 +136,7 @@ def force_gpu_memory_cleanup():
     gc.collect()
 
 
-def transcribe_file_simple_auto(input_path, output_dir=None):
+def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override: Optional[int] = None, batch_size_override: Optional[int] = None):
     """
     High-quality, simplified single-file transcription on best available device.
     - Device selection: CUDA > DirectML > CPU
@@ -197,6 +205,10 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
         device_name = f"CPU ({multiprocessing.cpu_count()} cores)"
         model = whisper.load_model("large", device="cpu")
 
+    # Apply explicit threads override if provided
+    if isinstance(threads_override, int) and threads_override > 0:
+        config["cpu_threads"] = max(1, min(64, threads_override))
+
     # Set CPU threads (& interop)
     torch_api.set_num_threads(config["cpu_threads"])
     try:
@@ -227,6 +239,16 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
         # DirectML or others
         return 16
     batch_size = _choose_batch_size("cuda" if chosen_device == "cuda" else ("cpu" if chosen_device == "cpu" else "dml"))
+    # Allow environment override for batch size
+    try:
+        env_bs = int(os.environ.get("TRANSCRIBE_BATCH_SIZE", "") or 0)
+    except Exception:
+        env_bs = 0
+    if env_bs > 0:
+        batch_size = max(1, min(128, env_bs))
+    # Explicit parameter override wins last
+    if isinstance(batch_size_override, int) and batch_size_override > 0:
+        batch_size = max(1, min(128, batch_size_override))
     print(f"📦 Inference batch size: {batch_size}")
 
     # Run transcription in a watchdog thread
@@ -474,15 +496,17 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
     return txt_path
 
 
-def transcribe_file_optimised(input_path, model_name="medium", output_dir=None, force_optimised=True):
+def transcribe_file_optimised(input_path, model_name="medium", output_dir=None, force_optimised=True, *, threads_override: Optional[int] = None, batch_size_override: Optional[int] = None):
     """Compatibility wrapper. Uses the simple auto path."""
-    return transcribe_file_simple_auto(input_path, output_dir=output_dir)
+    return transcribe_file_simple_auto(input_path, output_dir=output_dir, threads_override=threads_override, batch_size_override=batch_size_override)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Simplified auto-detected transcription")
     parser.add_argument("--input", required=True, help="Input audio/video file")
     parser.add_argument("--output-dir", help="Output directory (default: Downloads)")
+    parser.add_argument("--threads", type=int, help="Override CPU threads for PyTorch/OMP/MKL")
+    parser.add_argument("--batch-size", type=int, help="Override inference batch size")
     args = parser.parse_args()
 
     if not os.path.isfile(args.input):
@@ -490,7 +514,12 @@ def main():
         return 1
 
     try:
-        transcribe_file_simple_auto(args.input, output_dir=args.output_dir)
+        transcribe_file_simple_auto(
+            args.input,
+            output_dir=args.output_dir,
+            threads_override=args.threads,
+            batch_size_override=getattr(args, "batch_size", None),
+        )
         return 0
     except Exception as e:
         print(f"Error: {e}")

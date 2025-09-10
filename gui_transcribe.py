@@ -29,7 +29,7 @@ SUPPORTED_EXTS = (
 # Default Downloads folder retained for compatibility with CLI --outdir override
 DEFAULT_DOWNLOADS = os.path.normpath(os.path.join(os.path.expanduser("~"), "Downloads"))
 
-def run_transcription(input_file: str, outdir: Optional[str], output_queue: queue.Queue):
+def run_transcription(input_file: str, outdir: Optional[str], output_queue: queue.Queue, *, threads_override: Optional[int] = None, batch_size_override: Optional[int] = None):
     """Run transcription for a single file with large model and auto device detection.
 
     Output directory defaults to the source file directory if not provided.
@@ -95,7 +95,12 @@ def run_transcription(input_file: str, outdir: Optional[str], output_queue: queu
         output_queue.put("Using Large model with auto device detection\n")
         output_queue.put("Direct processing, maximum threads\n")
 
-        out_txt = transcribe_file_simple_auto(input_file, output_dir=target_outdir)
+        out_txt = transcribe_file_simple_auto(
+            input_file,
+            output_dir=target_outdir,
+            threads_override=threads_override,
+            batch_size_override=batch_size_override,
+        )
 
         if out_txt and os.path.exists(out_txt):
             output_queue.put("Transcription complete! Files saved next to the source file.\n")
@@ -171,7 +176,7 @@ def run_transcription(input_file: str, outdir: Optional[str], output_queue: queu
             print(f"   Post-processing cleanup warning: {e}")
 
 
-def run_batch_transcription(paths: List[str], outdir_override: Optional[str], output_queue: queue.Queue):
+def run_batch_transcription(paths: List[str], outdir_override: Optional[str], output_queue: queue.Queue, *, threads_override: Optional[int] = None, batch_size_override: Optional[int] = None):
     """Run batch transcription sequentially over provided file paths.
 
     Each file is saved next to its source (unless outdir_override is provided).
@@ -185,7 +190,7 @@ def run_batch_transcription(paths: List[str], outdir_override: Optional[str], ou
     for idx, p in enumerate(paths, start=1):
         output_queue.put("\n[{} / {}] Processing: {}\n".format(idx, total, os.path.basename(p)))
         try:
-            run_transcription(p, outdir_override, output_queue)
+            run_transcription(p, outdir_override, output_queue, threads_override=threads_override, batch_size_override=batch_size_override)
             successful += 1
         except Exception as e:
             failed += 1
@@ -213,7 +218,7 @@ class QueueWriter:
         pass
 
 
-def launch_gui(default_outdir: Optional[str] = None):
+def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optional[int] = None, default_batch_size: Optional[int] = None):
     if not TKINTER_AVAILABLE:
         print("Tkinter is not available in this Python build.")
         return
@@ -394,27 +399,49 @@ def launch_gui(default_outdir: Optional[str] = None):
                                 font=('Segoe UI', 9), foreground='#6b7280', background='white')
         status_label.grid(column=0, row=3, columnspan=3, sticky="w", padx=20, pady=(0, 10))
 
-        # Clean settings section
-        settings_section_label = ttk.Label(mainframe, text="Settings", style='Section.TLabel')
-        settings_section_label.grid(column=0, row=3, columnspan=3, sticky="w", pady=(0, 15))
+    # Clean settings section
+    settings_section_label = ttk.Label(mainframe, text="Settings", style='Section.TLabel')
+    settings_section_label.grid(column=0, row=3, columnspan=3, sticky="w", pady=(0, 15))
 
-        # Settings area with subtle background
-        settings_frame = tk.Frame(mainframe, bg='white', relief='flat', borderwidth=1)
-        settings_frame.grid(column=0, row=4, columnspan=3, sticky="ew", pady=(0, 25))
+    # Settings area with subtle background
+    settings_frame = tk.Frame(mainframe, bg='white', relief='flat', borderwidth=1)
+    settings_frame.grid(column=0, row=4, columnspan=3, sticky="ew", pady=(0, 25))
 
-        settings_text = """Large AI Model (Professional Quality)
+    settings_text = """Large AI Model (Professional Quality)
 Auto Device Detection (CUDA -> DirectML -> CPU)
 Direct Audio Processing
 Maximum CPU Threads (RAM-Optimized)
 Output Directory: Same as source file(s)
 Full Audio Capture (All Content Preserved)"""
 
-        settings_label = tk.Text(settings_frame, height=6, wrap=tk.WORD, font=('Segoe UI', 10),
+    settings_label = tk.Text(settings_frame, height=6, wrap=tk.WORD, font=('Segoe UI', 10),
                                 bg='white', fg='#374151', borderwidth=0, highlightthickness=0,
                                 padx=20, pady=20)
-        settings_label.insert(tk.END, settings_text)
-        settings_label.config(state=tk.DISABLED)
-        settings_label.grid(column=0, row=0, sticky="ew")
+    settings_label.insert(tk.END, settings_text)
+    settings_label.config(state=tk.DISABLED)
+    settings_label.grid(column=0, row=0, sticky="ew")
+
+    # Advanced performance overrides (optional)
+    overrides_frame = tk.Frame(settings_frame, bg='white')
+    overrides_frame.grid(column=0, row=1, sticky="ew", padx=20, pady=(0, 20))
+    overrides_frame.columnconfigure(1, weight=1)
+
+        tk.Label(overrides_frame, text="CPU Threads (optional):", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=0, row=0, sticky='w', pady=(5, 5))
+        threads_var = tk.StringVar()
+        if default_threads and isinstance(default_threads, int) and default_threads > 0:
+            threads_var.set(str(default_threads))
+        threads_entry = tk.Entry(overrides_frame, textvariable=threads_var, width=10, bg='#f9fafb', fg='#111827', relief='flat')
+        threads_entry.grid(column=1, row=0, sticky='w', padx=(10, 0))
+
+        tk.Label(overrides_frame, text="Batch Size (optional):", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=0, row=1, sticky='w', pady=(5, 5))
+        batch_var = tk.StringVar()
+        if default_batch_size and isinstance(default_batch_size, int) and default_batch_size > 0:
+            batch_var.set(str(default_batch_size))
+        batch_entry = tk.Entry(overrides_frame, textvariable=batch_var, width=10, bg='#f9fafb', fg='#111827', relief='flat')
+        batch_entry.grid(column=1, row=1, sticky='w', padx=(10, 0))
+
+    tip_label = tk.Label(overrides_frame, text="Leave blank for Auto. You can also set env vars TRANSCRIBE_THREADS and TRANSCRIBE_BATCH_SIZE.", bg='white', fg='#6b7280', font=('Segoe UI', 8))
+    tip_label.grid(column=0, row=2, columnspan=2, sticky='w', pady=(6, 0))
 
         # Log area with modern design
         log_section_label = ttk.Label(mainframe, text="Activity Log", style='Section.TLabel')
@@ -478,7 +505,7 @@ Full Audio Capture (All Content Preserved)"""
                 print("DEBUG: poll_queue exception: {}".format(e), file=sys.__stderr__)
             root.after(200, poll_queue)
 
-        def format_log_message(msg):
+    def format_log_message(msg):
             """Format log messages for better readability in the GUI."""
             if not msg.strip():
                 return msg
@@ -560,6 +587,17 @@ Full Audio Capture (All Content Preserved)"""
                     sys.stdout = QueueWriter(q)
                     sys.stderr = QueueWriter(q)
                     try:
+                        # Parse overrides from GUI fields
+                        def _parse_int_opt(s: str) -> Optional[int]:
+                            try:
+                                v = int(s.strip())
+                                return v if v > 0 else None
+                            except Exception:
+                                return None
+
+                        threads_override = _parse_int_opt(threads_var.get())
+                        batch_override = _parse_int_opt(batch_var.get())
+
                         if os.path.isdir(inp):
                             # Build list of eligible files (non-recursive)
                             files = []
@@ -574,10 +612,22 @@ Full Audio Capture (All Content Preserved)"""
                             if not files:
                                 q.put("No supported media files found in the selected folder.\n")
                             else:
-                                run_batch_transcription(files, outdir_override=None, output_queue=q)
+                                run_batch_transcription(
+                                    files,
+                                    outdir_override=None,
+                                    output_queue=q,
+                                    threads_override=threads_override,
+                                    batch_size_override=batch_override,
+                                )
                         else:
                             # Single file mode, save next to source file
-                            run_transcription(inp, outdir=None, output_queue=q)
+                            run_transcription(
+                                inp,
+                                outdir=None,
+                                output_queue=q,
+                                threads_override=threads_override,
+                                batch_size_override=batch_override,
+                            )
                     finally:
                         sys.stdout = old_out
                         sys.stderr = old_err
@@ -629,13 +679,15 @@ def main():
     parser.add_argument("--input", help="input audio/video file OR folder (if provided, runs headless)")
     parser.add_argument("--outdir", help="optional output folder override; defaults to saving next to source file(s)")
     parser.add_argument("--gui", action="store_true", help="launch GUI mode")
+    parser.add_argument("--threads", type=int, help="Override CPU threads for PyTorch/OMP/MKL")
+    parser.add_argument("--batch-size", type=int, help="Override inference batch size")
     args = parser.parse_args()
 
     outdir = args.outdir or None  # default to same-as-source when not specified
 
     if args.gui or "--gui" in sys.argv:
         # Launch GUI in this process
-        launch_gui(default_outdir=outdir)
+        launch_gui(default_outdir=outdir, default_threads=args.threads, default_batch_size=getattr(args, "batch_size", None))
         return
 
     if args.input:
@@ -654,9 +706,9 @@ def main():
                 if not files:
                     q.put("No supported media files found in the provided folder.\n")
                 else:
-                    run_batch_transcription(files, outdir_override=outdir, output_queue=q)
+                    run_batch_transcription(files, outdir_override=outdir, output_queue=q, threads_override=args.threads, batch_size_override=getattr(args, "batch_size", None))
             else:
-                run_transcription(p, outdir, q)
+                run_transcription(p, outdir, q, threads_override=args.threads, batch_size_override=getattr(args, "batch_size", None))
 
         t = threading.Thread(target=runner)
         t.start()
