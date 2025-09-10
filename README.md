@@ -43,19 +43,18 @@ python gui_transcribe.py
 
 Headless (save next to source):
 ```powershell
-python gui_transcribe.py --input "C:\path\to\file.mp4" --outdir "$env:USERPROFILE\Downloads" --threads 16 --batch-size 24 --ram-gb 8 --vram-fraction 0.75
+python gui_transcribe.py --input "C:\path\to\file.mp4" --outdir "$env:USERPROFILE\Downloads" --threads 16 --ram-gb 8 --vram-fraction 0.75
 ```
 
 ## Performance knobs
 CLI flags (override auto-detected settings):
 ```powershell
-python transcribe_optimised.py --input "C:\path\to\file.mp3" --threads 16 --batch-size 24 --ram-gb 8 --ram-fraction 0.8 --vram-gb 6 --vram-fraction 0.75
+python transcribe_optimised.py --input "C:\path\to\file.mp3" --threads 16 --ram-gb 8 --ram-fraction 0.8 --vram-gb 6 --vram-fraction 0.75
 ```
 
 Environment variables (persist for the session):
 ```powershell
 $env:TRANSCRIBE_THREADS = '16'
-$env:TRANSCRIBE_BATCH_SIZE = '24'
 $env:TRANSCRIBE_RAM_GB = '8'
 $env:TRANSCRIBE_RAM_FRACTION = '0.8'
 $env:TRANSCRIBE_VRAM_GB = '6'
@@ -67,3 +66,4 @@ python gui_transcribe.py
 - Large model is used by default for best accuracy.
 - Outputs .txt and .docx are written alongside the input file.
 - If CUDA is available, it will be used; otherwise CPU is used automatically.
+ - Batch size is auto-managed internally and not passed to Whisper to maximize compatibility.

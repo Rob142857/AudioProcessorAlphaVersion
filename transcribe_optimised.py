@@ -167,7 +167,7 @@ def force_gpu_memory_cleanup():
     gc.collect()
 
 
-def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override: Optional[int] = None, batch_size_override: Optional[int] = None):
+def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override: Optional[int] = None):
     """
     High-quality, simplified single-file transcription on best available device.
     - Device selection: CUDA > DirectML > CPU
@@ -490,9 +490,9 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     return txt_path
 
 
-def transcribe_file_optimised(input_path, model_name="medium", output_dir=None, force_optimised=True, *, threads_override: Optional[int] = None, batch_size_override: Optional[int] = None):
+def transcribe_file_optimised(input_path, model_name="medium", output_dir=None, force_optimised=True, *, threads_override: Optional[int] = None):
     """Compatibility wrapper. Uses the simple auto path."""
-    return transcribe_file_simple_auto(input_path, output_dir=output_dir, threads_override=threads_override, batch_size_override=batch_size_override)
+    return transcribe_file_simple_auto(input_path, output_dir=output_dir, threads_override=threads_override)
 
 
 def main():
@@ -500,7 +500,6 @@ def main():
     parser.add_argument("--input", required=True, help="Input audio/video file")
     parser.add_argument("--output-dir", help="Output directory (default: Downloads)")
     parser.add_argument("--threads", type=int, help="Override CPU threads for PyTorch/OMP/MKL")
-    parser.add_argument("--batch-size", type=int, help="Override inference batch size")
     parser.add_argument("--ram-gb", type=float, help="Override usable RAM in GB (default: auto)")
     parser.add_argument("--ram-fraction", type=float, help="Override usable RAM as fraction (0.0-1.0, default: auto)")
     parser.add_argument("--vram-gb", type=float, help="Override usable VRAM in GB (default: auto)")
@@ -543,7 +542,6 @@ def main():
             args.input,
             output_dir=args.output_dir,
             threads_override=args.threads,
-            batch_size_override=getattr(args, "batch_size", None),
         )
         return 0
     except Exception as e:
