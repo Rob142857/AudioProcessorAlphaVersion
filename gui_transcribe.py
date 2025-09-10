@@ -12,6 +12,7 @@ import os
 import threading
 import queue
 import sys
+import subprocess
 from typing import Optional, List
 
 try:
@@ -440,6 +441,11 @@ def main():
 
     outdir = args.outdir or None  # default to same-as-source when not specified
 
+    if "--gui" in sys.argv:
+        # Launch GUI in this process
+        launch_gui(default_outdir=outdir)
+        return
+
     if args.input:
         # Run headless
         q = queue.Queue()
@@ -472,8 +478,16 @@ def main():
                 pass
         return
 
-    # Launch GUI
-    launch_gui(default_outdir=outdir)
+    # Launch GUI in detached process
+    try:
+        subprocess.Popen([sys.executable, __file__, "--gui"], 
+                        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("GUI launched in background. You can now use the terminal for other commands.")
+    except Exception as e:
+        print(f"Failed to launch GUI in background: {e}")
+        print("Launching GUI in foreground instead...")
+        launch_gui(default_outdir=outdir)
 
 
 if __name__ == "__main__":
