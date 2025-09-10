@@ -47,3 +47,6 @@ Thumbs.db
 
 # Editor directories
 .vscode/
+
+# Environment reports
+env_report.json
