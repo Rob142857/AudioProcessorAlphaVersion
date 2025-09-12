@@ -35,9 +35,11 @@ def get_maximum_hardware_config():
     _ensure_torch_available()
     torch_api = cast(Any, torch)
     cpu_cores = max(multiprocessing.cpu_count(), 1)
-    total_ram_gb = psutil.virtual_memory().total / (1024 ** 3)
-    # Default: 80% of total RAM
-    usable_ram_gb = max(total_ram_gb * 0.8, 1.0)
+    vm = psutil.virtual_memory()
+    total_ram_gb = vm.total / (1024 ** 3)
+    available_ram_gb = vm.available / (1024 ** 3)
+    # Default: plan to use 95% of currently available RAM (paging file will handle spillover)
+    usable_ram_gb = max(available_ram_gb * 0.95, 1.0)
     # RAM overrides via env: prefer absolute GB then fraction
     try:
         env_ram_gb = float(os.environ.get("TRANSCRIBE_RAM_GB", "") or 0)
@@ -48,9 +50,11 @@ def get_maximum_hardware_config():
     except Exception:
         env_ram_frac = 0.0
     if env_ram_gb > 0:
+        # Absolute cap (do not exceed physical total)
         usable_ram_gb = max(1.0, min(total_ram_gb, env_ram_gb))
     elif 0.05 <= env_ram_frac <= 1.0:
-        usable_ram_gb = max(1.0, total_ram_gb * env_ram_frac)
+        # Fraction of currently available RAM
+        usable_ram_gb = max(1.0, available_ram_gb * env_ram_frac)
 
     devices = ["cpu"]
     has_cuda = False
@@ -77,14 +81,9 @@ def get_maximum_hardware_config():
     except Exception:
         dml_available = False
 
-    # Threads: be more aggressive but still bounded by RAM and practical limits
-    if usable_ram_gb >= 16:
-        cpu_threads = min(max(cpu_cores, 1), 32)
-    elif usable_ram_gb >= 8:
-        cpu_threads = min(max(cpu_cores, 1), 24)
-    else:
-        cpu_threads = min(max(cpu_cores, 1), 16)
-    cpu_threads = max(cpu_threads, 4)
+    # Threads: target ~70% of logical cores by default
+    import math
+    cpu_threads = max(1, min(64, math.ceil(cpu_cores * 0.70)))
 
     # Environment override for threads
     try:
@@ -117,6 +116,7 @@ def get_maximum_hardware_config():
         "cpu_cores": cpu_cores,
         "cpu_threads": cpu_threads,
         "total_ram_gb": total_ram_gb,
+    "available_ram_gb": available_ram_gb,
         "usable_ram_gb": usable_ram_gb,
         "devices": devices,
         "gpu_workers": gpu_workers,
@@ -192,6 +192,14 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     print(f"📁 Input: {os.path.basename(input_path)}")
 
     config = get_maximum_hardware_config()
+    # Report planning
+    try:
+        print(f"🧠 Planning: CPU threads ≈70% cores -> {config['cpu_threads']} of {config['cpu_cores']}")
+        print(f"💾 RAM plan: using up to ~{config['usable_ram_gb']:.1f} GB (95% of {config['available_ram_gb']:.1f} GB available)")
+        if float(config.get('allowed_vram_gb') or 0) > 0:
+            print(f"🎛️ VRAM cap: ~{float(config['allowed_vram_gb']):.1f} GB of total {float(config.get('cuda_total_vram_gb') or 0):.1f} GB")
+    except Exception:
+        pass
     if not output_dir:
         output_dir = os.path.join(os.path.expanduser("~"), "Downloads")
 
@@ -266,6 +274,15 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
 
     # Note: batch size is not passed to Whisper to ensure broad compatibility across versions
 
+    # Optional: NVML for GPU utilisation logging
+    nvml = None
+    try:
+        import pynvml  # type: ignore
+        pynvml.nvmlInit()
+        nvml = pynvml
+    except Exception:
+        nvml = None
+
     # Run transcription in a watchdog thread
     import threading
     transcription_complete = False
@@ -310,7 +327,15 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
                 total = torch_api.cuda.get_device_properties(0).total_memory / (1024 ** 3)
                 pct = (used / total) * 100
                 elapsed = time.time() - start_watch
-                print(f"📊 Progress: {elapsed:.0f}s elapsed | GPU Memory: {used:.1f}/{total:.1f}GB ({pct:.1f}%)")
+                util_txt = ""
+                if nvml is not None:
+                    try:
+                        h = nvml.nvmlDeviceGetHandleByIndex(0)
+                        util = nvml.nvmlDeviceGetUtilizationRates(h)
+                        util_txt = f" | GPU Util: {util.gpu}% | Mem Util: {util.memory}%"
+                    except Exception:
+                        util_txt = ""
+                print(f"📊 Progress: {elapsed:.0f}s | GPU Mem: {used:.1f}/{total:.1f}GB ({pct:.1f}%)" + util_txt)
                 if pct > 95:
                     torch_api.cuda.empty_cache()
             except Exception as e:
@@ -500,14 +525,10 @@ def main():
     parser.add_argument("--input", required=True, help="Input audio/video file")
     parser.add_argument("--output-dir", help="Output directory (default: Downloads)")
     parser.add_argument("--threads", type=int, help="Override CPU threads for PyTorch/OMP/MKL")
-    parser.add_argument("--ram-gb", type=float, help="Override usable RAM in GB (default: auto)")
-    parser.add_argument("--ram-fraction", type=float, help="Override usable RAM as fraction (0.0-1.0, default: auto)")
-    parser.add_argument("--vram-gb", type=float, help="Override usable VRAM in GB (default: auto)")
-    parser.add_argument("--vram-fraction", type=float, help="Override usable VRAM as fraction (0.0-1.0, default: auto)")
-    parser.add_argument("--ram-gb", type=float, help="Cap usable system RAM in GB for planning (env TRANSCRIBE_RAM_GB)")
-    parser.add_argument("--ram-frac", type=float, help="Cap usable system RAM as fraction 0-1 (env TRANSCRIBE_RAM_FRACTION)")
-    parser.add_argument("--vram-gb", type=float, help="Cap usable CUDA VRAM in GB for planning (env TRANSCRIBE_VRAM_GB)")
-    parser.add_argument("--vram-frac", type=float, help="Cap usable CUDA VRAM as fraction 0-1 (env TRANSCRIBE_VRAM_FRACTION)")
+    parser.add_argument("--ram-gb", type=float, help="Cap usable system RAM in GB (env TRANSCRIBE_RAM_GB)")
+    parser.add_argument("--ram-frac", "--ram-fraction", dest="ram_fraction", type=float, help="Cap usable system RAM as fraction 0-1 (env TRANSCRIBE_RAM_FRACTION)")
+    parser.add_argument("--vram-gb", type=float, help="Cap usable CUDA VRAM in GB (env TRANSCRIBE_VRAM_GB)")
+    parser.add_argument("--vram-frac", "--vram-fraction", dest="vram_fraction", type=float, help="Cap usable CUDA VRAM as fraction 0-1 (env TRANSCRIBE_VRAM_FRACTION)")
     args = parser.parse_args()
 
     if not os.path.isfile(args.input):
@@ -516,26 +537,16 @@ def main():
 
     # Apply env overrides for RAM/VRAM if provided
     try:
-        if getattr(args, "ram_gb", None):
+        if getattr(args, "ram_gb", None) is not None:
             os.environ["TRANSCRIBE_RAM_GB"] = str(max(1.0, float(args.ram_gb)))
-        if getattr(args, "ram_frac", None):
-            os.environ["TRANSCRIBE_RAM_FRACTION"] = str(max(0.05, min(1.0, float(args.ram_frac))))
-        if getattr(args, "vram_gb", None):
+        if getattr(args, "ram_fraction", None) is not None:
+            os.environ["TRANSCRIBE_RAM_FRACTION"] = str(max(0.05, min(1.0, float(args.ram_fraction))))
+        if getattr(args, "vram_gb", None) is not None:
             os.environ["TRANSCRIBE_VRAM_GB"] = str(max(0.5, float(args.vram_gb)))
-        if getattr(args, "vram_frac", None):
-            os.environ["TRANSCRIBE_VRAM_FRACTION"] = str(max(0.05, min(1.0, float(args.vram_frac))))
+        if getattr(args, "vram_fraction", None) is not None:
+            os.environ["TRANSCRIBE_VRAM_FRACTION"] = str(max(0.05, min(1.0, float(args.vram_fraction))))
     except Exception:
         pass
-
-    # Set RAM/VRAM overrides via env if provided
-    if getattr(args, "ram_gb", None) is not None:
-        os.environ["TRANSCRIBE_RAM_GB"] = str(args.ram_gb)
-    if getattr(args, "ram_fraction", None) is not None:
-        os.environ["TRANSCRIBE_RAM_FRACTION"] = str(args.ram_fraction)
-    if getattr(args, "vram_gb", None) is not None:
-        os.environ["TRANSCRIBE_VRAM_GB"] = str(args.vram_gb)
-    if getattr(args, "vram_fraction", None) is not None:
-        os.environ["TRANSCRIBE_VRAM_FRACTION"] = str(args.vram_fraction)
 
     try:
         transcribe_file_simple_auto(
