@@ -77,10 +77,10 @@ if (!(Test-Path .\speech2textrme)) {
 Set-Location .\speech2textrme
 
 Write-Host "=== Prerequisites Complete! ===" -ForegroundColor Green
-Write-Host "Launching Speech to Text Transcription Tool installer..." -ForegroundColor Yellow
+Write-Host "Launching Speech to Text Transcription Tool installer (turbo model preloading)..." -ForegroundColor Yellow
 
 # Launch the main installer
 .\run.bat
 
 Write-Host "=== Installation Complete! ===" -ForegroundColor Green
-Write-Host "You can now run: python gui_transcribe.py" -ForegroundColor Cyan
+Write-Host "You can now run: python gui_transcribe.py --gui" -ForegroundColor Cyan

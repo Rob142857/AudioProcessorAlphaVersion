@@ -1,8 +1,8 @@
 @echo off
 echo === Speech to Text Transcription Tool v1.0Beta Complete Installer ===
 echo Choose your preferred backend:
-echo [1] PyTorch Whisper (GPU/CPU, large model)
-echo [2] WhisperCPP (CPU-only, turbo v3 model, faster)
+echo [1] PyTorch Whisper (GPU/CPU, default large-v3-turbo)
+echo [2] WhisperCPP (CPU-only, turbo v3 model)
 echo.
 
 set /p choice="Enter your choice (1 or 2): "
@@ -14,7 +14,7 @@ goto :pytorch
 
 :pytorch
 echo.
-echo === Installing PyTorch Whisper Version ===
+echo === Installing PyTorch Whisper Version (turbo default) ===
 echo Installing prerequisites for Windows...
 
 REM Check if we're in the project directory
@@ -77,7 +77,7 @@ call run.bat
 
 echo.
 echo === Installation Complete! ===
-echo You can now run: python gui_transcribe.py
+echo You can now run: python gui_transcribe.py --gui
 pause
 goto :end
 
