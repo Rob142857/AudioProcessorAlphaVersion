@@ -81,9 +81,9 @@ def get_maximum_hardware_config():
     except Exception:
         dml_available = False
 
-    # Threads: target ~70% of logical cores by default
+    # Threads: target ~90% of logical cores by default for maximum throughput
     import math
-    cpu_threads = max(1, min(64, math.ceil(cpu_cores * 0.70)))
+    cpu_threads = max(1, min(64, math.ceil(cpu_cores * 0.90)))
 
     # Environment override for threads
     try:
@@ -194,7 +194,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     config = get_maximum_hardware_config()
     # Report planning
     try:
-        print(f"🧠 Planning: CPU threads ≈70% cores -> {config['cpu_threads']} of {config['cpu_cores']}")
+        print(f"🧠 Planning: CPU threads ≈90% cores -> {config['cpu_threads']} of {config['cpu_cores']}")
         print(f"💾 RAM plan: using up to ~{config['usable_ram_gb']:.1f} GB (95% of {config['available_ram_gb']:.1f} GB available)")
         if float(config.get('allowed_vram_gb') or 0) > 0:
             print(f"🎛️ VRAM cap: ~{float(config['allowed_vram_gb']):.1f} GB of total {float(config.get('cuda_total_vram_gb') or 0):.1f} GB")
@@ -214,6 +214,22 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     device_name = "CPU"
     model: Any = None
     chosen_device = "cpu"
+    selected_model_name = "large-v3-turbo"  # default preference
+
+    # Prefer turbo; if it's not listed as available, fall back to the next best
+    try:
+        import whisper  # type: ignore
+        avail = set(whisper.available_models())
+        turbo_available = ("large-v3-turbo" in avail)
+        if not turbo_available:
+            for cand in ("large-v3", "large"):
+                if cand in avail:
+                    selected_model_name = cand
+                    break
+        print(f"🧩 Whisper turbo available: {turbo_available}")
+        print(f"🗂️  Selecting model: {selected_model_name}")
+    except Exception as e:
+        print(f"⚠️  Could not query whisper.available_models(): {e}. Proceeding with '{selected_model_name}'.")
 
     try:
         if "cuda" in config["devices"] and torch_api.cuda.is_available():
@@ -230,7 +246,23 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
                     print(f"🧩 Limiting CUDA allocator to ~{frac*100:.0f}% of VRAM ({allowed_vram:.1f}GB)")
             except Exception as e:
                 print(f"⚠️  Could not set CUDA memory fraction: {e}")
-            model = whisper.load_model("large", device="cuda")
+            # Enable performance knobs where supported
+            try:
+                if hasattr(torch_api.backends, "cudnn"):
+                    torch_api.backends.cudnn.benchmark = True
+                # TF32 can speed up matmul on Ampere+; harmless elsewhere
+                if hasattr(torch_api.backends, "cuda") and hasattr(torch_api.backends.cuda, "matmul"):
+                    try:
+                        torch_api.backends.cuda.matmul.allow_tf32 = True
+                    except Exception:
+                        pass
+                try:
+                    torch_api.set_float32_matmul_precision("high")
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            model = whisper.load_model(selected_model_name, device="cuda")
         elif config.get("dml_available", False):
             try:
                 import torch_directml  # type: ignore
@@ -238,7 +270,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
                 chosen_device = dml_device
                 device_name = "DirectML GPU"
                 print("🎯 Device: DirectML GPU")
-                model = whisper.load_model("large", device=dml_device)
+                model = whisper.load_model(selected_model_name, device=dml_device)
             except Exception as e:
                 print(f"⚠️  DirectML unavailable, falling back to CPU: {e}")
                 model = None
@@ -246,13 +278,18 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
             chosen_device = "cpu"
             device_name = f"CPU ({multiprocessing.cpu_count()} cores)"
             print(f"🎯 Device: {device_name}")
-            model = whisper.load_model("large", device="cpu")
+            model = whisper.load_model(selected_model_name, device="cpu")
     except Exception as load_e:
         print(f"❌ Model load failed on preferred device: {load_e}")
         print("🔄 Falling back to CPU...")
         chosen_device = "cpu"
         device_name = f"CPU ({multiprocessing.cpu_count()} cores)"
-        model = whisper.load_model("large", device="cpu")
+        try:
+            import whisper  # type: ignore
+            model = whisper.load_model(selected_model_name, device="cpu")
+        except Exception:
+            # Last resort
+            model = whisper.load_model("large", device="cpu")
 
     # Apply explicit threads override if provided
     if isinstance(threads_override, int) and threads_override > 0:
@@ -351,7 +388,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
             except Exception:
                 pass
         try:
-            model = whisper.load_model("large", device="cpu")
+            model = whisper.load_model(selected_model_name, device="cpu")
             torch_api.set_num_threads(config["cpu_threads"])
             transcription_result = model.transcribe(
                 input_path,
@@ -434,8 +471,13 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     # Post-processing
     try:
         pm = PunctuationModel()
+        t0 = time.time()
         full_text = pm.restore_punctuation(full_text)
-        print("✅ Punctuation restoration completed")
+        t1 = time.time()
+        # Second pass for improved sentence boundaries
+        full_text = pm.restore_punctuation(full_text)
+        t2 = time.time()
+        print(f"✅ Punctuation restoration completed (passes: 2 | {t1 - t0:.1f}s + {t2 - t1:.1f}s)")
     except Exception as e:
         print(f"⚠️  Punctuation restoration failed: {e}")
 
@@ -466,13 +508,29 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     # Save DOCX with fallback
     try:
         doc = Document()
-        doc.add_heading(f'Maximum Performance Auto Transcription: {base_name}', 0)
+        doc.add_heading(f'Transcription: {base_name}', 0)
+        # Badge: duration, speed, language, model only
+        elapsed_total = time.time() - start_time
+        # Compute realtime speed factor if duration available
+        speed_factor = None
+        try:
+            if duration and duration > 0:
+                speed_factor = max(0.01, float(duration) / float(elapsed_total))
+        except Exception:
+            speed_factor = None
+        # Language from whisper result (ISO code)
+        detected_lang = None
+        if isinstance(transcription_result, dict):
+            detected_lang = transcription_result.get("language")
+        # Write compact metadata badge
         if duration:
             doc.add_paragraph(f'Duration: {format_duration(duration)}')
-        elapsed_total = time.time() - start_time
-        doc.add_paragraph(f'Processing time: {format_duration(elapsed_total)}')
-        doc.add_paragraph('Model: Large (Maximum Performance Auto-detected)')
-        doc.add_paragraph(f'Hardware: {device_name}')
+        if speed_factor is not None:
+            doc.add_paragraph(f'Speed: {speed_factor:.2f}× realtime')
+        if detected_lang:
+            doc.add_paragraph(f'Language: {detected_lang}')
+        if selected_model_name:
+            doc.add_paragraph(f'Model: {selected_model_name}')
         doc.add_paragraph('')
         for para in formatted_text.split("\n\n"):
             if para.strip():
