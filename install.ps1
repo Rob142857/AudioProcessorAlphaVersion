@@ -54,7 +54,7 @@ $ProgressPreference = "SilentlyContinue"  # Speed up downloads
 # Repository information
 $REPO_URL = "https://github.com/Rob142857/AudioProcessorAlphaVersion.git"
 $REPO_NAME = "AudioProcessorAlphaVersion"
-$SCRIPT_VERSION = "1.0.0"
+$SCRIPT_VERSION = "1.1.0"
 
 # Required software versions
 $PYTHON_VERSION = "3.11"

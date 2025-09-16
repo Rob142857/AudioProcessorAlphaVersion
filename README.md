@@ -12,7 +12,7 @@ High‑quality local transcription using Whisper large‑v3‑turbo by default. 
 ### One-Command Complete Installation (Recommended)
 Run this single PowerShell command as Administrator to install everything automatically:
 ```powershell
-irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex"
 ```
 
 **What this does:**
@@ -31,13 +31,13 @@ irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/
 The installer supports these parameters:
 ```powershell
 # Skip system prerequisites (if already installed)
-irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex -SkipPrerequisites
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex -SkipPrerequisites"
 
 # Skip model preloading
-irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex -SkipModelPreload
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex -SkipModelPreload"
 
 # Force CPU-only PyTorch (ignore GPU detection)
-irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex -ForceCpuTorch
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex -ForceCpuTorch"
 ```
 
 ### Manual Setup (Advanced Users)
