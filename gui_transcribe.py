@@ -249,10 +249,10 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         root.minsize(960, 720)
         root.configure(bg='#f8f9fa')
         # Make the root grid resizable so children can expand
+        root.grid_columnconfigure(0, weight=1)
+        root.grid_rowconfigure(0, weight=1)
+        # Maximize by default on Windows to ensure button visibility (ignore if not supported)
         try:
-            root.grid_columnconfigure(0, weight=1)
-            root.grid_rowconfigure(0, weight=1)
-            # Maximize by default on Windows to ensure button visibility
             root.state('zoomed')
         except Exception:
             pass
@@ -323,11 +323,11 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         tk.Label(combined_frame, text="CPU Threads (optional):", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=0, row=3, sticky='w', padx=20, pady=(4, 6))
         threads_var = tk.StringVar(value=str(default_threads) if default_threads and default_threads > 0 else "")
         tk.Entry(combined_frame, textvariable=threads_var, width=10, bg='#f9fafb', fg='#111827', relief='flat').grid(column=1, row=3, sticky='w', padx=(12, 6), pady=(4, 6))
-    tk.Label(combined_frame, text="Leave blank for Auto. Or set TRANSCRIBE_THREADS.", bg='white', fg='#6b7280', font=('Segoe UI', 8)).grid(column=2, row=3, columnspan=2, sticky='w', padx=(6, 20), pady=(4, 6))
+        tk.Label(combined_frame, text="Leave blank for Auto. Or set TRANSCRIBE_THREADS.", bg='white', fg='#6b7280', font=('Segoe UI', 8)).grid(column=2, row=3, columnspan=2, sticky='w', padx=(6, 20), pady=(4, 6))
 
-    # Row 3b: Max performance mode
-    max_perf_var = tk.IntVar(value=1)
-    tk.Checkbutton(combined_frame, text="Maximise performance (use all cores, high priority, aggressive VRAM)", variable=max_perf_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=4, columnspan=4, sticky='w', padx=20, pady=(0, 8))
+        # Row 3b: Max performance mode
+        max_perf_var = tk.IntVar(value=1)
+        tk.Checkbutton(combined_frame, text="Maximise performance (use all cores, high priority, aggressive VRAM)", variable=max_perf_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=4, columnspan=4, sticky='w', padx=20, pady=(0, 8))
 
         # Row 4: Compact description
         desc = (
