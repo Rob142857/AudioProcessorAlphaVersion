@@ -1,68 +1,93 @@
-# Speech to Text Transcription (Whisper large‑v3‑turbo)
+# Audio Processor Alpha Version (Whisper large‑v3‑turbo)
 
 High‑quality local transcription using Whisper large‑v3‑turbo by default. Outputs .txt and .docx next to the source file.
 
 ## Requirements
-- Windows with Python 3.10+ (PowerShell recommended)
-- ffmpeg on PATH
+- Windows 10/11 with Administrator access
+- Internet connection for initial setup
+- At least 8GB RAM recommended
 
 ## Install
 
-Quick install (PowerShell one‑liner):
+### One-Command Complete Installation (Recommended)
+Run this single PowerShell command as Administrator to install everything automatically:
 ```powershell
 irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex
 ```
 
-Local script runner:
+**What this does:**
+- ✅ Installs Python 3.11 (if not present)
+- ✅ Installs system prerequisites (Git, FFmpeg, VC++ Redistributables)
+- ✅ Downloads the application code
+- ✅ Creates and activates a virtual environment
+- ✅ Installs all Python dependencies
+- ✅ Auto-detects your hardware and installs optimal PyTorch build
+- ✅ Preloads the Whisper model (saves time on first use)
+- ✅ Launches the GUI application automatically
+
+**Important:** Run PowerShell as Administrator (right-click → "Run as Administrator") before executing the command.
+
+### Installation Options
+The installer supports these parameters:
 ```powershell
-./run.bat
+# Skip system prerequisites (if already installed)
+irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex -SkipPrerequisites
+
+# Skip model preloading
+irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex -SkipModelPreload
+
+# Force CPU-only PyTorch (ignore GPU detection)
+irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex -ForceCpuTorch
 ```
 
-Manual setup (if you want control over Torch):
+### Manual Setup (Advanced Users)
+If you prefer manual control:
 ```powershell
-python -m venv .venv
-./.venv/Scripts/Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+# 1. Clone repository
+git clone https://github.com/Rob142857/AudioProcessorAlphaVersion.git
+cd AudioProcessorAlphaVersion
+
+# 2. Run installer with local script
+.\install.ps1
 ```
 
-Install PyTorch (choose ONE that matches your hardware):
+### Hardware-Specific PyTorch Installation
+The automatic installer detects your hardware and installs the optimal PyTorch build:
+- **NVIDIA GPU**: CUDA 11.8 (broad compatibility)
+- **AMD/Intel GPU**: DirectML support
+- **CPU-only**: CPU-optimized build
+
+If you need a different PyTorch version, you can override after installation:
 ```powershell
-# CPU-only (universal):
-python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+# Activate virtual environment
+.\.venv\Scripts\Activate.ps1
 
-# NVIDIA CUDA 11.8 (good for GTX 10xx/16xx, RTX 20xx):
-python -m pip install torch --index-url https://download.pytorch.org/whl/cu118
-
-# NVIDIA CUDA 12.1+ (newer RTX 30/40 series):
-python -m pip install torch --index-url https://download.pytorch.org/whl/cu121
-
-# Windows DirectML (AMD/Intel GPUs):
-python -m pip install torch-directml
+# Install specific PyTorch build
+python -m pip install torch --index-url https://download.pytorch.org/whl/cu121  # CUDA 12.1+
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU-only
+python -m pip install torch-directml  # DirectML for AMD/Intel GPUs
 ```
 
-Preload the turbo model cache (recommended to avoid first‑run delay):
+### Verify Installation
+Check that everything works:
 ```powershell
-python preload_models.py
-```
-
-Verify environment (writes env_report.json):
-```powershell
-python check_env.py
+python check_env.py  # Writes env_report.json with system info
 ```
 
 ## Run
-GUI:
+The installer launches the GUI automatically. To run manually:
+
+**GUI Mode:**
 ```powershell
 python gui_transcribe.py
 ```
 
-Headless (save next to source):
+**Headless Mode (save next to source):**
 ```powershell
 python gui_transcribe.py --input "C:\path\to\file.mp4" --outdir "$env:USERPROFILE\Downloads" --threads 16 --ram-gb 8 --vram-fraction 0.75
 ```
 
-## Performance knobs
+## Performance Configuration
 CLI flags (override auto-detected settings):
 ```powershell
 python transcribe_optimised.py --input "C:\path\to\file.mp3" --threads 16 --ram-gb 8 --ram-fraction 0.8 --vram-gb 6 --vram-fraction 0.75
@@ -79,14 +104,26 @@ python gui_transcribe.py
 ```
 
 ## Notes
-- Default model: Whisper large‑v3‑turbo (falls back to large‑v3, then large if needed).
-- Outputs .txt and .docx are written alongside the input file.
-- If CUDA is available, it will be used; otherwise CPU or DirectML is used automatically.
-- No batch size or VAD options are passed to Whisper (maximizes compatibility across versions).
-- CPU threads default to ~90% of logical cores (override via --threads or TRANSCRIBE_THREADS).
-- RAM plan defaults to ~95% of currently available memory (override via env/CLI). 
-- Punctuation restoration runs twice for improved results.
+- Default model: Whisper large‑v3‑turbo (falls back to large‑v3, then large if needed)
+- Outputs .txt and .docx are written alongside the input file
+- Hardware acceleration is used automatically when available
+- No batch size or VAD options are passed to Whisper (maximizes compatibility)
+- CPU threads default to ~90% of logical cores
+- RAM usage defaults to ~95% of available memory
+- Punctuation restoration runs twice for improved results
 
 ### Troubleshooting
-- If you see errors about missing torch, install PyTorch using one of the commands above that matches your hardware, then re-run preload and the GUI.
-- Ensure ffmpeg is on PATH. A local ffmpeg.exe is included here; you can add it to PATH or install via winget.
+- **"Must be run as Administrator"**: Right-click PowerShell → "Run as Administrator"
+- **Python installation fails**: Install Python 3.11 manually from python.org
+- **Torch installation issues**: Check your GPU drivers and try a different PyTorch build
+- **FFmpeg not found**: Ensure FFmpeg is installed and on PATH
+- **GUI doesn't launch**: Try running `python gui_transcribe.py --gui` manually
+- **Permission errors**: Ensure you're running as Administrator
+- **Network timeouts**: Check your internet connection and try again
+
+### System Requirements Details
+- **OS**: Windows 10 version 1903+ or Windows 11
+- **RAM**: 8GB minimum, 16GB+ recommended
+- **Storage**: 2GB free space (plus model cache)
+- **Network**: Required for initial setup and model downloads
+- **GPU**: Optional but recommended (NVIDIA, AMD, or Intel with DirectML)

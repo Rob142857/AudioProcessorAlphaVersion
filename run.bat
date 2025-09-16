@@ -1,42 +1,33 @@
 @echo off
-REM Simple bootstrap: create venv if missing, install deps, attempt hardware-optimized torch, preload model, launch GUI
+REM Simple launcher: activate venv and run GUI (assumes dependencies are installed)
 
-if not exist ".venv\Scripts\Activate.ps1" (
-  echo Creating virtual environment...
-  python -m venv .venv
+if not exist ".venv\Scripts\Activate.bat" (
+  echo Error: Virtual environment not found. Run install.ps1 first.
+  pause
+  exit /b 1
 )
 
 echo Activating virtual environment...
 call .venv\Scripts\Activate.bat
 
-echo Installing base Python packages (will skip torch so you can choose the right build)...
-python -m pip install --upgrade pip
-
-REM Attempt to install all requirements
-python -m pip install -r requirements.txt
+echo Checking for required packages...
+python -c "import sys; import whisper, psutil, docx; print('✓ All required packages found')" 2>nul
 if errorlevel 1 (
   echo.
-  echo ⚠️  Some packages failed to install. Trying individually...
+  echo ❌ Required packages not found. Run install.ps1 first to install dependencies.
   echo.
-  python -m pip install "openai-whisper==20250625"
-  python -m pip install "deepmultilingualpunctuation==1.0.1"
-  python -m pip install "moviepy>=2.1.0,<3.0.0"
-  python -m pip install "imageio-ffmpeg>=0.6.0,<0.7.0"
-  python -m pip install "python-docx>=1.2.0,<2.0.0"
-  python -m pip install "psutil>=7.0.0,<8.0.0"
-  python -m pip install "tqdm>=4.60.0,<5.0.0"
+  pause
+  exit /b 1
 )
 
 echo.
-echo 🔍 If you have an NVIDIA/AMD/Intel GPU, install a matching PyTorch build now (see README). Otherwise CPU-only works.
+echo � Launching Speech to Text Transcription Tool GUI...
 echo.
-
-echo Preloading Whisper model (turbo preferred)...
-python preload_models.py
-if errorlevel 1 (
-  echo Model preloading failed. You may need to install torch (see README) before preloading.
-)
-
-echo Launching GUI...
 python gui_transcribe.py --gui
+
+if errorlevel 1 (
+  echo.
+  echo ❌ GUI failed to start. Check the error messages above.
+  echo.
+)
 pause
