@@ -92,7 +92,7 @@ def run_transcription(input_file: str, outdir: Optional[str], output_queue: queu
         target_outdir = outdir if outdir else os.path.dirname(input_file)
 
         output_queue.put("Starting transcription for: {}\n".format(os.path.basename(input_file)))
-        output_queue.put("Using Large model with auto device detection\n")
+        output_queue.put("Using Whisper large-v3-turbo (auto device selection)\n")
         output_queue.put("Direct processing, maximum threads\n")
 
         out_txt = transcribe_file_simple_auto(
@@ -327,7 +327,7 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
 
         # Row 4: Compact description
         desc = (
-            "Large AI Model • Auto device (CUDA/DirectML/CPU) • Direct audio • RAM-optimized threads\n"
+            "Whisper large-v3-turbo • Auto device (CUDA/DirectML/CPU) • Direct audio • RAM-optimized threads\n"
             "Outputs saved next to source file(s)."
         )
         ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=4, columnspan=4, sticky='w', padx=20, pady=(8, 16))
