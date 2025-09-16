@@ -12,11 +12,11 @@ call .venv\Scripts\Activate.bat
 echo Installing base Python packages (will skip torch so you can choose the right build)...
 python -m pip install --upgrade pip
 
-REM Attempt to install all requirements; if webrtcvad fails, continue without it
+REM Attempt to install all requirements
 python -m pip install -r requirements.txt
 if errorlevel 1 (
   echo.
-  echo ⚠️  Some packages failed to install (often webrtcvad). Installing others individually...
+  echo ⚠️  Some packages failed to install. Trying individually...
   echo.
   python -m pip install "openai-whisper==20250625"
   python -m pip install "deepmultilingualpunctuation==1.0.1"
@@ -25,8 +25,6 @@ if errorlevel 1 (
   python -m pip install "python-docx>=1.2.0,<2.0.0"
   python -m pip install "psutil>=7.0.0,<8.0.0"
   python -m pip install "tqdm>=4.60.0,<5.0.0"
-  echo Attempting webrtcvad installation...
-  python -m pip install "webrtcvad==2.0.10"
 )
 
 echo.

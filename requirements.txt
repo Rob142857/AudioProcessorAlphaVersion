@@ -5,7 +5,6 @@ deepmultilingualpunctuation==1.0.1
 # Audio/Video processing
 moviepy>=2.1.0,<3.0.0
 imageio-ffmpeg>=0.6.0,<0.7.0
-webrtcvad==2.0.10
 
 # Document generation
 python-docx>=1.2.0,<2.0.0

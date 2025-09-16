@@ -79,7 +79,7 @@ Set-Location .\speech2textrme
 Write-Host "=== Prerequisites Complete! ===" -ForegroundColor Green
 Write-Host "Launching Speech to Text Transcription Tool installer (turbo model preloading)..." -ForegroundColor Yellow
 
-# Launch the main installer
+# Launch the main installer (requirements no longer include VAD to avoid MSVC toolchain dependency)
 .\run.bat
 
 Write-Host "=== Installation Complete! ===" -ForegroundColor Green
