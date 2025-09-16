@@ -319,18 +319,22 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         # Thin separator
         ttk.Separator(combined_frame, orient='horizontal').grid(column=0, row=2, columnspan=4, sticky='ew', padx=20, pady=(4, 10))
 
-        # Row 3: Threads override
+    # Row 3: Threads override
         tk.Label(combined_frame, text="CPU Threads (optional):", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=0, row=3, sticky='w', padx=20, pady=(4, 6))
         threads_var = tk.StringVar(value=str(default_threads) if default_threads and default_threads > 0 else "")
         tk.Entry(combined_frame, textvariable=threads_var, width=10, bg='#f9fafb', fg='#111827', relief='flat').grid(column=1, row=3, sticky='w', padx=(12, 6), pady=(4, 6))
-        tk.Label(combined_frame, text="Leave blank for Auto. Or set TRANSCRIBE_THREADS.", bg='white', fg='#6b7280', font=('Segoe UI', 8)).grid(column=2, row=3, columnspan=2, sticky='w', padx=(6, 20), pady=(4, 6))
+    tk.Label(combined_frame, text="Leave blank for Auto. Or set TRANSCRIBE_THREADS.", bg='white', fg='#6b7280', font=('Segoe UI', 8)).grid(column=2, row=3, columnspan=2, sticky='w', padx=(6, 20), pady=(4, 6))
+
+    # Row 3b: Max performance mode
+    max_perf_var = tk.IntVar(value=1)
+    tk.Checkbutton(combined_frame, text="Maximise performance (use all cores, high priority, aggressive VRAM)", variable=max_perf_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=4, columnspan=4, sticky='w', padx=20, pady=(0, 8))
 
         # Row 4: Compact description
         desc = (
             "Whisper large-v3-turbo • Auto device (CUDA/DirectML/CPU) • Direct audio • RAM-optimized threads\n"
             "Outputs saved next to source file(s)."
         )
-        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=4, columnspan=4, sticky='w', padx=20, pady=(8, 16))
+        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=5, columnspan=4, sticky='w', padx=20, pady=(8, 16))
 
         # Handlers attached to the buttons above
 
@@ -399,6 +403,15 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                             return None
 
                     thr = _parse_int_opt(threads_var.get())
+
+                    # Apply max performance env for the worker
+                    try:
+                        if max_perf_var.get() == 1:
+                            os.environ["TRANSCRIBE_MAX_PERF"] = "1"
+                        else:
+                            os.environ.pop("TRANSCRIBE_MAX_PERF", None)
+                    except Exception:
+                        pass
 
                     if os.path.isdir(inp):
                         files = []

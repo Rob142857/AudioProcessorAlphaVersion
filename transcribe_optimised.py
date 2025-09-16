@@ -30,7 +30,7 @@ def _ensure_torch_available():
         raise RuntimeError(f"PyTorch is required but failed to import: {_torch_import_error}")
 
 
-def get_maximum_hardware_config():
+def get_maximum_hardware_config(max_perf: bool = False):
     """Detect hardware and return a conservative, stable config dict."""
     _ensure_torch_available()
     torch_api = cast(Any, torch)
@@ -81,9 +81,12 @@ def get_maximum_hardware_config():
     except Exception:
         dml_available = False
 
-    # Threads: target ~90% of logical cores by default for maximum throughput
+    # Threads: target ~90% by default; in max_perf mode, use 100% of logical cores
     import math
-    cpu_threads = max(1, min(64, math.ceil(cpu_cores * 0.90)))
+    if max_perf:
+        cpu_threads = max(1, min(64, cpu_cores))
+    else:
+        cpu_threads = max(1, min(64, math.ceil(cpu_cores * 0.90)))
 
     # Environment override for threads
     try:
@@ -124,6 +127,7 @@ def get_maximum_hardware_config():
         "dml_available": dml_available,
         "cuda_total_vram_gb": cuda_total_vram_gb,
         "allowed_vram_gb": allowed_vram_gb,
+        "max_perf": bool(max_perf),
     }
     return cfg
 
@@ -191,10 +195,19 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     print("🚀 MAXIMUM PERFORMANCE AUTO-DETECTED TRANSCRIPTION")
     print(f"📁 Input: {os.path.basename(input_path)}")
 
-    config = get_maximum_hardware_config()
+    # Decide max performance mode from env
+    max_perf = False
+    try:
+        max_perf = os.environ.get("TRANSCRIBE_MAX_PERF", "").strip() in ("1", "true", "True")
+    except Exception:
+        max_perf = False
+    config = get_maximum_hardware_config(max_perf=max_perf)
     # Report planning
     try:
-        print(f"🧠 Planning: CPU threads ≈90% cores -> {config['cpu_threads']} of {config['cpu_cores']}")
+        if config.get('max_perf'):
+            print(f"🧠 Planning: MAX PERF -> CPU threads {config['cpu_threads']} of {config['cpu_cores']}")
+        else:
+            print(f"🧠 Planning: CPU threads ≈90% cores -> {config['cpu_threads']} of {config['cpu_cores']}")
         print(f"💾 RAM plan: using up to ~{config['usable_ram_gb']:.1f} GB (95% of {config['available_ram_gb']:.1f} GB available)")
         if float(config.get('allowed_vram_gb') or 0) > 0:
             print(f"🎛️ VRAM cap: ~{float(config['allowed_vram_gb']):.1f} GB of total {float(config.get('cuda_total_vram_gb') or 0):.1f} GB")
@@ -232,6 +245,17 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
         print(f"⚠️  Could not query whisper.available_models(): {e}. Proceeding with '{selected_model_name}'.")
 
     try:
+        # Elevate process priority on Windows for max perf
+        if config.get('max_perf'):
+            try:
+                import psutil
+                p = psutil.Process(os.getpid())
+                if hasattr(psutil, 'HIGH_PRIORITY_CLASS'):
+                    p.nice(psutil.HIGH_PRIORITY_CLASS)
+                    print("🚀 Process priority set to HIGH")
+            except Exception as e:
+                print(f"⚠️  Could not raise process priority: {e}")
+
         if "cuda" in config["devices"] and torch_api.cuda.is_available():
             chosen_device = "cuda"
             device_name = f"CUDA GPU ({torch_api.cuda.get_device_name(0)})"
@@ -240,10 +264,18 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
             try:
                 total_vram = float(config.get("cuda_total_vram_gb") or 0.0)
                 allowed_vram = float(config.get("allowed_vram_gb") or 0.0)
-                if total_vram > 0 and 0.5 <= allowed_vram < total_vram:
-                    frac = max(0.05, min(0.95, allowed_vram / total_vram))
-                    torch_api.cuda.set_per_process_memory_fraction(frac, device=0)
-                    print(f"🧩 Limiting CUDA allocator to ~{frac*100:.0f}% of VRAM ({allowed_vram:.1f}GB)")
+                if total_vram > 0:
+                    if 0.5 <= allowed_vram < total_vram:
+                        frac = max(0.05, min(0.95, allowed_vram / total_vram))
+                        torch_api.cuda.set_per_process_memory_fraction(frac, device=0)
+                        print(f"🧩 Limiting CUDA allocator to ~{frac*100:.0f}% of VRAM ({allowed_vram:.1f}GB)")
+                    elif config.get('max_perf'):
+                        # Default to aggressive allocator in max perf mode
+                        try:
+                            torch_api.cuda.set_per_process_memory_fraction(0.95, device=0)
+                            print("🧩 Allowing CUDA allocator to use ~95% of VRAM (max perf)")
+                        except Exception:
+                            pass
             except Exception as e:
                 print(f"⚠️  Could not set CUDA memory fraction: {e}")
             # Enable performance knobs where supported
@@ -298,7 +330,8 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     # Set CPU threads (& interop)
     torch_api.set_num_threads(config["cpu_threads"])
     try:
-        torch_api.set_num_interop_threads(max(2, min(8, config["cpu_threads"] // 4)))
+        interop = max(2, min(16, (config["cpu_threads"] // 2) if config.get('max_perf') else (config["cpu_threads"] // 4)))
+        torch_api.set_num_interop_threads(interop)
     except Exception:
         pass
     # Also hint MKL/OMP to use similar thread counts
@@ -560,7 +593,8 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     force_gpu_memory_cleanup()
 
     # Print memory status after cleanup
-    mem = psutil.virtual_memory()
+    import psutil as _ps
+    mem = _ps.virtual_memory()
     if torch_api is not None and torch_api.cuda.is_available():
         try:
             gpu_after = torch_api.cuda.memory_allocated() / (1024 ** 3)
