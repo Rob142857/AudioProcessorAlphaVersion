@@ -244,9 +244,18 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
     try:
         root = tk.Tk()
         root.title("Speech to Text Transcription Tool v1.0Beta")
-        root.geometry("800x750")
-        root.minsize(700, 650)
+        # Open large enough to show the Start button; also allow maximizing
+        root.geometry("1100x800")
+        root.minsize(960, 720)
         root.configure(bg='#f8f9fa')
+        # Make the root grid resizable so children can expand
+        try:
+            root.grid_columnconfigure(0, weight=1)
+            root.grid_rowconfigure(0, weight=1)
+            # Maximize by default on Windows to ensure button visibility
+            root.state('zoomed')
+        except Exception:
+            pass
 
         style = ttk.Style()
         style.configure('Clean.TFrame', background='#f8f9fa')
@@ -257,7 +266,10 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
 
         mainframe = ttk.Frame(root, style='Clean.TFrame', padding="30 30 30 30")
         mainframe.grid(column=0, row=0, sticky="nsew")
+        # Allow horizontal expansion across all columns
+        mainframe.columnconfigure(0, weight=1)
         mainframe.columnconfigure(1, weight=1)
+        mainframe.columnconfigure(2, weight=1)
         mainframe.rowconfigure(6, weight=1)
         mainframe.rowconfigure(7, minsize=60)
 
@@ -267,15 +279,19 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         ttk.Label(title_frame, text="Speech to Text Transcription Tool", style='Title.TLabel').grid(column=0, row=0, sticky="w")
         ttk.Label(title_frame, text="v1.0Beta - Professional AI-powered transcription", style='Subtitle.TLabel').grid(column=0, row=1, sticky="w", pady=(8, 0))
 
-        # File selection
-        ttk.Label(mainframe, text="File Selection", style='Section.TLabel').grid(column=0, row=1, columnspan=3, sticky="w", pady=(0, 15))
-        file_frame = tk.Frame(mainframe, bg='white', relief='flat', borderwidth=1)
-        file_frame.grid(column=0, row=2, columnspan=3, sticky="ew", pady=(0, 25))
-        file_frame.columnconfigure(1, weight=1)
-        ttk.Label(file_frame, text="Audio/Video File or Folder:", background='white', foreground='#374151', font=('Segoe UI', 10, 'bold')).grid(column=0, row=0, sticky="w", padx=20, pady=(20, 10))
-        input_var = tk.StringVar()
-        tk.Entry(file_frame, textvariable=input_var, font=('Segoe UI', 10), relief='flat', borderwidth=1, bg='white', fg='#2c3e50', insertbackground='#2c3e50').grid(column=0, row=1, columnspan=2, sticky="ew", padx=20, pady=(0, 20))
+        # Input & Settings (combined)
+        ttk.Label(mainframe, text="Input & Settings", style='Section.TLabel').grid(column=0, row=1, columnspan=3, sticky="w", pady=(0, 15))
+        combined_frame = tk.Frame(mainframe, bg='white', relief='flat', borderwidth=1)
+        combined_frame.grid(column=0, row=2, columnspan=3, sticky="ew", pady=(0, 25))
+        # Column 1 expands; buttons stay compact
+        combined_frame.columnconfigure(1, weight=1)
 
+        # Row 0: File/Folder selection line
+        ttk.Label(combined_frame, text="Audio/Video File or Folder:", background='white', foreground='#374151', font=('Segoe UI', 10, 'bold')).grid(column=0, row=0, sticky="w", padx=20, pady=(18, 6))
+        input_var = tk.StringVar()
+        tk.Entry(combined_frame, textvariable=input_var, font=('Segoe UI', 10), relief='flat', borderwidth=1, bg='#f9fafb', fg='#111827', insertbackground='#111827').grid(column=1, row=0, sticky="ew", padx=(12, 6), pady=(18, 6))
+
+        # Define handlers before creating buttons
         def browse_input():
             types = [("Audio files", "*.mp3 *.wav *.flac *.m4a *.aac *.ogg *.wma"),("Video files", "*.mp4 *.avi *.mkv *.mov *.wmv *.flv *.webm"),("All files", "*.*")]
             p = filedialog.askopenfilename(title="Select audio/video file", filetypes=types)
@@ -293,35 +309,30 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                 except Exception:
                     status_label.config(text=f"Selected folder: {os.path.basename(d)}", foreground='#059669')
 
-        tk.Button(file_frame, text="Browse File", command=browse_input, font=('Segoe UI', 10, 'bold'), bg='#007acc', fg='white', relief='flat', borderwidth=0, padx=20, pady=8, activebackground='#0056b3', activeforeground='white').grid(column=2, row=1, sticky="e", padx=(10, 10))
-        tk.Button(file_frame, text="Browse Folder", command=browse_folder, font=('Segoe UI', 10, 'bold'), bg='#0ea5e9', fg='white', relief='flat', borderwidth=0, padx=20, pady=8, activebackground='#0284c7', activeforeground='white').grid(column=2, row=2, sticky="e", padx=(10, 20), pady=(0, 20))
-        status_label = ttk.Label(file_frame, text="No file or folder selected", font=('Segoe UI', 9), foreground='#6b7280', background='white')
-        status_label.grid(column=0, row=3, columnspan=3, sticky="w", padx=20, pady=(0, 10))
+        tk.Button(combined_frame, text="Browse File", command=browse_input, font=('Segoe UI', 10, 'bold'), bg='#007acc', fg='white', relief='flat', borderwidth=0, padx=16, pady=6, activebackground='#0056b3', activeforeground='white').grid(column=2, row=0, sticky="e", padx=(6, 6), pady=(18, 6))
+        tk.Button(combined_frame, text="Browse Folder", command=browse_folder, font=('Segoe UI', 10, 'bold'), bg='#0ea5e9', fg='white', relief='flat', borderwidth=0, padx=16, pady=6, activebackground='#0284c7', activeforeground='white').grid(column=3, row=0, sticky="e", padx=(6, 20), pady=(18, 6))
 
-        # Settings and overrides
-        ttk.Label(mainframe, text="Settings", style='Section.TLabel').grid(column=0, row=3, columnspan=3, sticky="w", pady=(0, 15))
-        settings_frame = tk.Frame(mainframe, bg='white', relief='flat', borderwidth=1)
-        settings_frame.grid(column=0, row=4, columnspan=3, sticky="ew", pady=(0, 25))
-        settings_text = (
-            "Large AI Model (Professional Quality)\n"
-            "Auto Device Detection (CUDA -> DirectML -> CPU)\n"
-            "Direct Audio Processing\n"
-            "Maximum CPU Threads (RAM-Optimized)\n"
-            "Output Directory: Same as source file(s)\n"
-            "Full Audio Capture (All Content Preserved)"
-        )
-        st = tk.Text(settings_frame, height=6, wrap=tk.WORD, font=('Segoe UI', 10), bg='white', fg='#374151', borderwidth=0, highlightthickness=0, padx=20, pady=20)
-        st.insert(tk.END, settings_text)
-        st.config(state=tk.DISABLED)
-        st.grid(column=0, row=0, sticky="ew")
+        # Row 1: Status line
+        status_label = ttk.Label(combined_frame, text="No file or folder selected", font=('Segoe UI', 9), foreground='#6b7280', background='white')
+        status_label.grid(column=0, row=1, columnspan=4, sticky="w", padx=20, pady=(0, 8))
 
-        overrides = tk.Frame(settings_frame, bg='white')
-        overrides.grid(column=0, row=1, sticky="ew", padx=20, pady=(0, 20))
-        overrides.columnconfigure(1, weight=1)
-        tk.Label(overrides, text="CPU Threads (optional):", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=0, row=0, sticky='w', pady=(5, 5))
+        # Thin separator
+        ttk.Separator(combined_frame, orient='horizontal').grid(column=0, row=2, columnspan=4, sticky='ew', padx=20, pady=(4, 10))
+
+        # Row 3: Threads override
+        tk.Label(combined_frame, text="CPU Threads (optional):", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=0, row=3, sticky='w', padx=20, pady=(4, 6))
         threads_var = tk.StringVar(value=str(default_threads) if default_threads and default_threads > 0 else "")
-        tk.Entry(overrides, textvariable=threads_var, width=10, bg='#f9fafb', fg='#111827', relief='flat').grid(column=1, row=0, sticky='w', padx=(10, 0))
-        tk.Label(overrides, text="Leave blank for Auto. You can also set env var TRANSCRIBE_THREADS.", bg='white', fg='#6b7280', font=('Segoe UI', 8)).grid(column=0, row=1, columnspan=2, sticky='w', pady=(6, 0))
+        tk.Entry(combined_frame, textvariable=threads_var, width=10, bg='#f9fafb', fg='#111827', relief='flat').grid(column=1, row=3, sticky='w', padx=(12, 6), pady=(4, 6))
+        tk.Label(combined_frame, text="Leave blank for Auto. Or set TRANSCRIBE_THREADS.", bg='white', fg='#6b7280', font=('Segoe UI', 8)).grid(column=2, row=3, columnspan=2, sticky='w', padx=(6, 20), pady=(4, 6))
+
+        # Row 4: Compact description
+        desc = (
+            "Large AI Model • Auto device (CUDA/DirectML/CPU) • Direct audio • RAM-optimized threads\n"
+            "Outputs saved next to source file(s)."
+        )
+        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=4, columnspan=4, sticky='w', padx=20, pady=(8, 16))
+
+        # Handlers attached to the buttons above
 
         # Log
         ttk.Label(mainframe, text="Activity Log", style='Section.TLabel').grid(column=0, row=5, columnspan=3, sticky="w", pady=(0, 15))
