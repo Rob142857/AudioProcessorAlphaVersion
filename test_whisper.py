@@ -16,12 +16,14 @@ model = whisper.load_model('medium', device='cpu')
 print(f'Model loaded: {model}')
 
 # Transcribe directly
-result = model.transcribe(input_path, language=None,
+result = model.transcribe(input_path, language="en",  # Optimized for English language
                          compression_ratio_threshold=float('inf'),
                          logprob_threshold=-1.0,
                          no_speech_threshold=0.1,
                          condition_on_previous_text=False,
-                         temperature=0.0)
+                         temperature=0.0,
+                         suppress_tokens="-1",  # Disable token suppression for guardrail removal
+                         )
 
 text = str(result.get('text', '')).strip()
 print(f'Direct transcription result: "{text}"')
@@ -30,11 +32,13 @@ print(f'Text length: {len(text)} characters')
 # Also test with different no_speech_threshold values
 print('\nTesting with different no_speech_threshold values:')
 for threshold in [0.1, 0.3, 0.5, 0.8]:
-    result = model.transcribe(input_path, language=None,
+    result = model.transcribe(input_path, language="en",  # Optimized for English language
                              compression_ratio_threshold=float('inf'),
                              logprob_threshold=-1.0,
                              no_speech_threshold=threshold,
                              condition_on_previous_text=False,
-                             temperature=0.0)
+                             temperature=0.0,
+                             suppress_tokens="-1",  # Disable token suppression for guardrail removal
+                             )
     text = str(result.get('text', '')).strip()
     print(f'  Threshold {threshold}: "{text}" (len: {len(text)})')

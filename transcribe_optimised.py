@@ -292,13 +292,14 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                 # Transcribe this segment
                 result = model.transcribe(
                     segment_audio,
-                    language=None,
+                    language="en",  # Optimized for English language
                     compression_ratio_threshold=2.4,
                     logprob_threshold=-2.0,
                     no_speech_threshold=0.3,
                     condition_on_previous_text=True,  # Enable context from previous segments
                     temperature=0.0,
                     verbose=False,  # Reduce verbosity for batch processing
+                    suppress_tokens="-1",  # Disable token suppression for guardrail removal
                 )
 
                 if isinstance(result, dict) and "segments" in result:
@@ -711,7 +712,14 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     except Exception:
         enable_speakers = False
 
-    # Use dataset optimization for large files if enabled
+    # Check if dataset optimization should be used
+    use_dataset = False
+    try:
+        use_dataset = os.environ.get("TRANSCRIBE_USE_DATASET", "").strip() in ("1", "true", "True")
+        if use_dataset:
+            print("🎯 Dataset optimization enabled for GPU pipeline efficiency")
+    except Exception:
+        use_dataset = False
     if use_dataset:
         try:
             file_size = os.path.getsize(input_path)
@@ -896,13 +904,14 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
             # Call transcribe without batch_size or vad_filter for broad compatibility
             result = model.transcribe(
                 input_path,
-                language=None,
+                language="en",  # Optimized for English language
                 compression_ratio_threshold=2.4,
                 logprob_threshold=-2.0,
                 no_speech_threshold=0.3,
                 condition_on_previous_text=False,
                 temperature=0.0,
                 verbose=True,
+                suppress_tokens="-1",  # Disable token suppression for guardrail removal
             )
             transcription_result = result
             print("✅ Whisper transcription completed successfully")

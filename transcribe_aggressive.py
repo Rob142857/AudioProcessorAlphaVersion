@@ -382,14 +382,15 @@ def transcribe_segment_aggressive(model, audio_path, segment_info, worker_id):
         # Optimised Whisper parameters for better speech detection
         result = model.transcribe(
             segment_path,
-            language=None,
+            language="en",  # Optimized for English language
             compression_ratio_threshold=2.4,  # Less restrictive content filtering
             logprob_threshold=-2.0,           # More lenient confidence threshold
             no_speech_threshold=0.6,          # Even less sensitive speech detection (was 0.3)
             condition_on_previous_text=False, # No context dependency
             temperature=0.0,                  # Deterministic
             beam_size=5,                     # Higher quality beam search
-            patience=2.0                     # More thorough processing
+            patience=2.0,                    # More thorough processing
+            suppress_tokens="-1",            # Disable token suppression for guardrail removal
         )
         
         text = result.get("text", "").strip()
@@ -924,12 +925,14 @@ def transcribe_file_simple_auto(input_path, output_dir=None):
         print(f"📊 Using {primary_device.upper()} model for transcription")
         
         result = primary_model.transcribe(input_path, 
-                                language=None,
+                                language="en",  # Optimized for English language
                                 compression_ratio_threshold=float('inf'),  # Disabled
                                 logprob_threshold=-10.0,                   # Very low
                                 no_speech_threshold=0.0,                   # Disabled
                                 condition_on_previous_text=False,
-                                temperature=0.0)
+                                temperature=0.0,
+                                suppress_tokens="-1",  # Disable token suppression for guardrail removal
+                                )
         
         # Handle result
         if isinstance(result, dict):

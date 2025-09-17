@@ -86,12 +86,13 @@ def transcribe_segment_optimized(model, audio_path, segment_info=None):
         # Optimized Whisper parameters for quality
         result = model.transcribe(
             audio_to_transcribe,
-            language=None,
+            language="en",  # Optimized for English language
             compression_ratio_threshold=float('inf'),  # Bypass content filtering
             logprob_threshold=-1.0,                    # Accept lower confidence
             no_speech_threshold=0.1,                   # Lower speech detection threshold
             condition_on_previous_text=False,          # Disable context dependency
-            temperature=0.0                            # Deterministic decoding
+            temperature=0.0,                           # Deterministic decoding
+            suppress_tokens="-1",                      # Disable token suppression for guardrail removal
         )
         
         text = result.get("text", "").strip()
