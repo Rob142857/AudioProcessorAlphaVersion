@@ -2,16 +2,17 @@
 openai-whisper==20250625
 deepmultilingualpunctuation==1.0.1
 
-# Audio/Video processing
-moviepy>=2.1.0,<3.0.0
-imageio-ffmpeg>=0.6.0,<0.7.0
-
 # Document generation
 python-docx>=1.2.0,<2.0.0
 
 # System monitoring and performance optimization
 psutil>=7.0.0,<8.0.0
 tqdm>=4.60.0,<5.0.0
+
+# Legacy dependencies REMOVED (no longer needed by current GUI):
+# - webrtcvad (only used in old transcribe.py, not transcribe_optimised.py)
+# - moviepy (only used in older transcription modules)  
+# - imageio-ffmpeg (only used in older transcription modules)
 
 # GUI dependencies (tkinter is built-in with Python)
 # No additional GUI packages needed - using standard tkinter

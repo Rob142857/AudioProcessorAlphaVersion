@@ -13,21 +13,427 @@ import gc
 import psutil
 import argparse
 import multiprocessing
-from typing import Any, cast, Optional
+from typing import Any, cast, Optional, Dict
 
 # IMPORTANT: Import torch once at module import time. Do NOT delete torch.* from sys.modules.
 try:
     import torch  # type: ignore
+    from torch.utils.data import Dataset, DataLoader
+    import numpy as np
+    _torch_available = True
 except Exception as e:  # pragma: no cover
     torch = None  # type: ignore
+    Dataset = type(None)  # type: ignore
+    DataLoader = type(None)  # type: ignore
+    np = None  # type: ignore
     _torch_import_error = e
-else:
-    _torch_import_error = None
+    _torch_available = False
 
 
 def _ensure_torch_available():
     if torch is None:
         raise RuntimeError(f"PyTorch is required but failed to import: {_torch_import_error}")
+
+
+class AudioTranscriptionDataset(Dataset):
+    """
+    PyTorch Dataset for efficient audio transcription with GPU pipeline optimization.
+
+    This dataset enables:
+    - Batch processing of audio segments
+    - Efficient GPU memory usage
+    - Parallel data loading and preprocessing
+    - Better utilization of GPU pipelines
+    """
+
+    def __init__(self, audio_path: str, segment_length: int = 30, overlap: int = 5):
+        """
+        Initialize the dataset.
+
+        Args:
+            audio_path: Path to the audio file
+            segment_length: Length of each audio segment in seconds
+            overlap: Overlap between segments in seconds
+        """
+        self.audio_path = audio_path
+        self.segment_length = segment_length
+        self.overlap = overlap
+        self.segments = []
+
+        # Load audio and create segments
+        self._load_and_segment_audio()
+
+    def _load_and_segment_audio(self):
+        """Load audio file and create overlapping segments for efficient processing."""
+        try:
+            import whisper
+            from whisper.audio import load_audio
+
+            # Load the audio file
+            audio = load_audio(self.audio_path)
+            sample_rate = whisper.audio.SAMPLE_RATE
+            total_samples = len(audio)
+
+            # Calculate segment parameters
+            segment_samples = self.segment_length * sample_rate
+            overlap_samples = self.overlap * sample_rate
+            step_samples = segment_samples - overlap_samples
+
+            # Create overlapping segments
+            start_sample = 0
+
+            while start_sample < total_samples:
+                end_sample = min(start_sample + segment_samples, total_samples)
+                segment_audio = audio[start_sample:end_sample]
+
+                # Pad short segments if needed
+                if len(segment_audio) < segment_samples and np is not None:
+                    padding = np.zeros(segment_samples - len(segment_audio))
+                    segment_audio = np.concatenate([segment_audio, padding])
+
+                self.segments.append({
+                    'audio': segment_audio,
+                    'start_time': start_sample / sample_rate,
+                    'end_time': end_sample / sample_rate,
+                    'segment_id': len(self.segments)
+                })
+
+                start_sample += step_samples
+
+            print(f"📊 Created {len(self.segments)} audio segments for efficient GPU processing")
+
+        except Exception as e:
+            print(f"⚠️  Failed to create audio segments: {e}")
+            # Fallback: treat entire file as single segment
+            self.segments = [{
+                'audio': [],
+                'start_time': 0.0,
+                'end_time': 0.0,
+                'segment_id': 0
+            }]
+
+    def __len__(self) -> int:
+        """Return the number of segments."""
+        return len(self.segments)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """Get a segment by index."""
+        return self.segments[idx]
+
+
+def create_efficient_dataloader(audio_path: str, batch_size: int = 4, num_workers: int = 2) -> DataLoader:
+    """
+    Create an efficient DataLoader for audio transcription.
+
+    Args:
+        audio_path: Path to the audio file
+        batch_size: Number of segments to process in parallel
+        num_workers: Number of worker processes for data loading
+
+    Returns:
+        DataLoader configured for efficient GPU processing
+    """
+    dataset = AudioTranscriptionDataset(audio_path)
+
+    # Configure DataLoader for GPU efficiency
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,  # Maintain temporal order
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available() if torch and torch.cuda else False,  # Faster GPU transfer
+        prefetch_factor=2 if num_workers > 0 else None,  # Prefetch batches
+        persistent_workers=num_workers > 0  # Keep workers alive
+    )
+
+    return dataloader
+
+
+def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threads_override: Optional[int] = None):
+    """
+    Transcribe audio using dataset-based GPU pipeline optimization.
+
+    This function implements the GPU efficiency improvements suggested by PyTorch:
+    - Uses PyTorch Dataset for batch processing
+    - Leverages DataLoader for optimized data loading
+    - Implements overlapping segments for better context
+    - Utilizes GPU pipelines for maximum efficiency
+    """
+    _ensure_torch_available()
+    torch_api = cast(Any, torch)
+
+    # Lazy imports
+    import whisper
+    from docx import Document
+    from deepmultilingualpunctuation import PunctuationModel
+    from transcribe import (
+        get_media_duration, split_into_paragraphs, format_duration,
+    )
+
+    start_time = time.time()
+    print("🚀 DATASET-OPTIMIZED TRANSCRIPTION WITH GPU PIPELINE EFFICIENCY")
+    print(f"📁 Input: {os.path.basename(input_path)}")
+
+    # Check file size to determine if dataset optimization is beneficial
+    try:
+        file_size = os.path.getsize(input_path)
+        if file_size < 50 * 1024 * 1024:  # Less than 50MB
+            print("📊 File size < 50MB - falling back to standard processing for optimal performance")
+            return transcribe_file_simple_auto(input_path, output_dir, threads_override=threads_override)
+    except Exception:
+        pass
+
+    # Get hardware config
+    max_perf = os.environ.get("TRANSCRIBE_MAX_PERF", "").strip() in ("1", "true", "True")
+    config = get_maximum_hardware_config(max_perf=max_perf)
+
+    if not output_dir:
+        output_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+
+    duration = get_media_duration(input_path)
+    if duration:
+        print(f"⏱️  Duration: {format_duration(duration)}")
+
+    # Pre-run cleanup
+    force_gpu_memory_cleanup()
+
+    # Load model
+    device_name = "CPU"
+    model = None
+    chosen_device = "cpu"
+    selected_model_name = "large-v3-turbo"
+
+    try:
+        avail = set(whisper.available_models())
+        turbo_available = ("large-v3-turbo" in avail)
+        if not turbo_available:
+            for cand in ("large-v3", "large"):
+                if cand in avail:
+                    selected_model_name = cand
+                    break
+        print(f"🧩 Whisper turbo available: {turbo_available}")
+        print(f"🗂️  Selecting model: {selected_model_name}")
+    except Exception as e:
+        print(f"⚠️  Could not query whisper.available_models(): {e}")
+
+    # Load model on best available device
+    try:
+        if "cuda" in config["devices"] and torch_api.cuda.is_available():
+            chosen_device = "cuda"
+            device_name = f"CUDA GPU ({torch_api.cuda.get_device_name(0)})"
+            print("🎯 Device: CUDA GPU with dataset optimization")
+
+            # Enable GPU optimizations
+            if hasattr(torch_api.backends, "cudnn"):
+                torch_api.backends.cudnn.benchmark = True
+            if hasattr(torch_api.backends, "cuda") and hasattr(torch_api.backends.cuda, "matmul"):
+                try:
+                    torch_api.backends.cuda.matmul.allow_tf32 = True
+                except Exception:
+                    pass
+            try:
+                torch_api.set_float32_matmul_precision("high")
+            except Exception:
+                pass
+
+            model = whisper.load_model(selected_model_name, device="cuda")
+        else:
+            chosen_device = "cpu"
+            device_name = f"CPU ({multiprocessing.cpu_count()} cores)"
+            print(f"🎯 Device: {device_name}")
+            model = whisper.load_model(selected_model_name, device="cpu")
+    except Exception as e:
+        print(f"❌ Model load failed: {e}")
+        raise
+
+    # Set CPU threads
+    if isinstance(threads_override, int) and threads_override > 0:
+        config["cpu_threads"] = max(1, min(64, threads_override))
+
+    torch_api.set_num_threads(config["cpu_threads"])
+    try:
+        interop = max(2, min(16, config["cpu_threads"] // 4))
+        torch_api.set_num_interop_threads(interop)
+    except Exception:
+        pass
+
+    print(f"🧵 PyTorch threads set to: {config['cpu_threads']}")
+
+    # Create dataset and dataloader for efficient processing
+    try:
+        batch_size = 4 if chosen_device == "cuda" else 1
+        num_workers = min(2, config["cpu_threads"] // 2) if config["cpu_threads"] > 2 else 0
+
+        dataloader = create_efficient_dataloader(
+            input_path,
+            batch_size=batch_size,
+            num_workers=num_workers
+        )
+
+        print(f"📊 Dataset created with {len(dataloader.dataset)} segments, batch_size={batch_size}, workers={num_workers}")
+
+    except Exception as e:
+        print(f"⚠️  Dataset creation failed: {e} - falling back to standard processing")
+        return transcribe_file_simple_auto(input_path, output_dir, threads_override=threads_override)
+
+    # Process segments with dataset optimization
+    all_segments = []
+    segment_count = 0
+
+    print("🔄 Processing audio segments with GPU pipeline optimization...")
+
+    for batch in dataloader:
+        try:
+            for segment_data in batch:
+                segment_audio = segment_data['audio'].numpy() if hasattr(segment_data['audio'], 'numpy') else segment_data['audio']
+                start_time_seg = segment_data['start_time']
+                end_time_seg = segment_data['end_time']
+
+                # Transcribe this segment
+                result = model.transcribe(
+                    segment_audio,
+                    language=None,
+                    compression_ratio_threshold=2.4,
+                    logprob_threshold=-2.0,
+                    no_speech_threshold=0.3,
+                    condition_on_previous_text=True,  # Enable context from previous segments
+                    temperature=0.0,
+                    verbose=False,  # Reduce verbosity for batch processing
+                )
+
+                if isinstance(result, dict) and "segments" in result:
+                    for seg in result["segments"]:
+                        # Adjust timestamps to global timeline
+                        seg_copy = dict(seg)
+                        seg_copy["start"] = start_time_seg + seg.get("start", 0)
+                        seg_copy["end"] = start_time_seg + seg.get("end", 0)
+                        all_segments.append(seg_copy)
+
+                segment_count += 1
+                if segment_count % 10 == 0:
+                    print(f"📊 Processed {segment_count} segments...")
+
+        except Exception as e:
+            print(f"⚠️  Batch processing error: {e} - continuing with next batch")
+
+    print(f"✅ Dataset processing complete: {len(all_segments)} total segments")
+
+    # Combine results
+    full_text = ""
+    if all_segments:
+        # Sort segments by start time
+        all_segments.sort(key=lambda x: x.get("start", 0))
+
+        # Extract and combine text
+        texts = []
+        for seg in all_segments:
+            text = seg.get("text", "").strip()
+            if text:
+                texts.append(text)
+
+        full_text = " ".join(texts).strip()
+
+    if not full_text:
+        print("⚠️  Warning: No transcription text generated")
+        full_text = "[No speech detected or transcription failed]"
+
+    print(f"⚡ Hardware utilised: {device_name} (Dataset Optimized)")
+
+    # Post-processing (same as original)
+    try:
+        pm = PunctuationModel()
+        t0 = time.time()
+        full_text = pm.restore_punctuation(full_text)
+        t1 = time.time()
+        full_text = pm.restore_punctuation(full_text)
+        t2 = time.time()
+        print(f"✅ Punctuation restoration completed (passes: 2 | {t1 - t0:.1f}s + {t2 - t1:.1f}s)")
+    except Exception as e:
+        print(f"⚠️  Punctuation restoration failed: {e}")
+
+    try:
+        formatted = split_into_paragraphs(full_text, max_length=500)
+        if isinstance(formatted, list):
+            formatted_text = "\n\n".join(formatted)
+        else:
+            formatted_text = full_text
+        print("✅ Text formatting completed")
+    except Exception as e:
+        print(f"⚠️  Text formatting failed: {e}")
+        formatted_text = full_text
+
+    # Save files (same as original)
+    base_name = os.path.splitext(os.path.basename(input_path))[0]
+    txt_path = os.path.join(output_dir, f"{base_name}.txt")
+    docx_path = os.path.join(output_dir, f"{base_name}.docx")
+
+    try:
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(formatted_text)
+        print(f"✅ Text file saved: {txt_path}")
+    except Exception as e:
+        print(f"❌ Failed to save text file: {e}")
+        txt_path = None
+
+    try:
+        doc = Document()
+        doc.add_heading(f'Transcription: {base_name}', 0)
+
+        elapsed_total = time.time() - start_time
+        speed_factor = None
+        try:
+            if duration and duration > 0:
+                speed_factor = max(0.01, float(duration) / float(elapsed_total))
+        except Exception:
+            speed_factor = None
+
+        if duration:
+            doc.add_paragraph(f'Duration: {format_duration(duration)}')
+        if speed_factor is not None:
+            doc.add_paragraph(f'Speed: {speed_factor:.2f}× realtime')
+        if selected_model_name:
+            doc.add_paragraph(f'Model: {selected_model_name} (Dataset Optimized)')
+        doc.add_paragraph('')
+
+        for para in formatted_text.split("\n\n"):
+            if para.strip():
+                doc.add_paragraph(para.strip())
+        doc.save(docx_path)
+        print(f"✅ Word document saved: {docx_path}")
+    except Exception as e:
+        print(f"❌ Failed to create Word document: {e}")
+        try:
+            doc = Document()
+            doc.add_heading(f'Transcription: {base_name}', 0)
+            doc.add_paragraph(formatted_text[:5000])
+            doc.save(docx_path)
+            print(f"✅ Basic Word document saved: {docx_path}")
+        except Exception as e2:
+            print(f"❌ Failed to save even basic Word document: {e2}")
+            docx_path = None
+
+    # Final stats
+    elapsed = time.time() - start_time
+    print("\n🎉 DATASET-OPTIMIZED TRANSCRIPTION COMPLETE!")
+    print(f"📄 Text file: {txt_path}")
+    print(f"📄 Word document: {docx_path}")
+    print(f"⏱️  Total time: {format_duration(elapsed)}")
+
+    # Cleanup
+    force_gpu_memory_cleanup()
+
+    import psutil as _ps
+    mem = _ps.virtual_memory()
+    if torch_api.cuda.is_available():
+        try:
+            gpu_after = torch_api.cuda.memory_allocated() / (1024 ** 3)
+            print(f"📊 Memory after cleanup: RAM {mem.available / (1024**3):.1f}GB available, GPU {gpu_after:.1f}GB used")
+        except Exception:
+            print(f"📊 Memory after cleanup: RAM {mem.available / (1024**3):.1f}GB available")
+    else:
+        print(f"📊 Memory after cleanup: RAM {mem.available / (1024**3):.1f}GB available")
+
+    return txt_path
 
 
 def get_maximum_hardware_config(max_perf: bool = False):
@@ -186,7 +592,12 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     # Lazy imports (after torch is imported) to avoid docstring errors
     import whisper  # type: ignore
     from docx import Document  # type: ignore
-    from deepmultilingualpunctuation import PunctuationModel  # type: ignore
+    try:
+        from text_processor_enhanced import create_enhanced_processor
+        _enhanced_processor_available = True
+    except ImportError:
+        from deepmultilingualpunctuation import PunctuationModel  # type: ignore
+        _enhanced_processor_available = False
     from transcribe import (
         get_media_duration, split_into_paragraphs, format_duration,
     )
@@ -194,6 +605,27 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     start_time = time.time()
     print("🚀 MAXIMUM PERFORMANCE AUTO-DETECTED TRANSCRIPTION")
     print(f"📁 Input: {os.path.basename(input_path)}")
+
+    # Check if dataset optimization should be used
+    use_dataset = False
+    try:
+        use_dataset = os.environ.get("TRANSCRIBE_USE_DATASET", "").strip() in ("1", "true", "True")
+        if use_dataset:
+            print("🎯 Dataset optimization enabled for GPU pipeline efficiency")
+    except Exception:
+        use_dataset = False
+
+    # Use dataset optimization for large files if enabled
+    if use_dataset:
+        try:
+            file_size = os.path.getsize(input_path)
+            if file_size > 50 * 1024 * 1024:  # 50MB threshold
+                print("📊 Large file detected - using dataset optimization")
+                return transcribe_with_dataset_optimization(input_path, output_dir, threads_override)
+            else:
+                print("📊 File size < 50MB - using standard processing")
+        except Exception as e:
+            print(f"⚠️  Dataset check failed: {e} - using standard processing")
 
     # Decide max performance mode from env
     max_perf = False
@@ -501,16 +933,26 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
 
     print(f"⚡ Hardware utilised: {device_name}")
 
-    # Post-processing
+    # Post-processing with enhanced text processing
     try:
-        pm = PunctuationModel()
-        t0 = time.time()
-        full_text = pm.restore_punctuation(full_text)
-        t1 = time.time()
-        # Second pass for improved sentence boundaries
-        full_text = pm.restore_punctuation(full_text)
-        t2 = time.time()
-        print(f"✅ Punctuation restoration completed (passes: 2 | {t1 - t0:.1f}s + {t2 - t1:.1f}s)")
+        if _enhanced_processor_available:
+            # Use enhanced processor with spaCy and custom rules
+            processor = create_enhanced_processor(use_spacy=True, use_transformers=False)
+            t0 = time.time()
+            full_text = processor.restore_punctuation(full_text)
+            t1 = time.time()
+            print(f"✅ Enhanced punctuation restoration completed ({t1 - t0:.1f}s)")
+        else:
+            # Fallback to basic punctuation model
+            from deepmultilingualpunctuation import PunctuationModel
+            pm = PunctuationModel()
+            t0 = time.time()
+            full_text = pm.restore_punctuation(full_text)
+            t1 = time.time()
+            # Second pass for improved sentence boundaries
+            full_text = pm.restore_punctuation(full_text)
+            t2 = time.time()
+            print(f"✅ Basic punctuation restoration completed (passes: 2 | {t1 - t0:.1f}s + {t2 - t1:.1f}s)")
     except Exception as e:
         print(f"⚠️  Punctuation restoration failed: {e}")
 

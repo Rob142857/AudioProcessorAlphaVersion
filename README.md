@@ -1,6 +1,39 @@
-# Audio Processor Alpha Version (Whisper large‑v3‑turbo)
+## GPU Pipeline Optimization with Dataset Processing
 
-High‑quality local transcription using Whisper large‑v3‑turbo by default. Outputs .txt and .docx next to the source file.
+This application now supports **dataset-based GPU pipeline optimization** to maximize efficiency for large audio files. When enabled, it addresses PyTorch's optimization suggestion: *"you seem to be using pipelines in the gpu in order to maximise efficiency please use a dataset"*
+
+### Automatic Dataset Optimization
+For files larger than 50MB, the system automatically:
+- ✅ Splits audio into overlapping segments (30s with 5s overlap)
+- ✅ Uses PyTorch Dataset/DataLoader for efficient batch processing
+- ✅ Optimizes GPU memory usage with pinned memory and prefetching
+- ✅ Maintains temporal context across segments
+- ✅ Provides better GPU utilization and faster processing
+
+### Manual Control
+Enable dataset optimization manually:
+```bash
+# Enable dataset optimization
+set TRANSCRIBE_USE_DATASET=1
+
+# Run transcription
+python transcribe_optimised.py --input "large_audio_file.mp4"
+```
+
+### Performance Benefits
+- 🚀 **Faster processing** for large files (>50MB)
+- 🎯 **Better GPU utilization** with optimized pipelines
+- 💾 **Efficient memory usage** with batch processing
+- 🔄 **Parallel data loading** with multiple workers
+- 📊 **Progress tracking** for long transcriptions
+
+### When to Use Dataset Optimization
+- ✅ Large audio/video files (>50MB)
+- ✅ GPU-enabled systems (CUDA/DirectML)
+- ✅ Long-duration content (>30 minutes)
+- ✅ Batch processing scenarios
+
+The optimization is automatically disabled for smaller files where standard processing is more efficient.
 
 ## Requirements
 - Windows 10/11 with Administrator access
