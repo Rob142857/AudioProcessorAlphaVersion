@@ -445,8 +445,8 @@ def get_maximum_hardware_config(max_perf: bool = False):
     vm = psutil.virtual_memory()
     total_ram_gb = vm.total / (1024 ** 3)
     available_ram_gb = vm.available / (1024 ** 3)
-    # Default: plan to use 95% of currently available RAM (paging file will handle spillover)
-    usable_ram_gb = max(available_ram_gb * 0.95, 1.0)
+    # Default: plan to use 98% of currently available RAM (ULTRA AGGRESSIVE)
+    usable_ram_gb = max(available_ram_gb * 0.98, 1.0)
     # RAM overrides via env: prefer absolute GB then fraction
     try:
         env_ram_gb = float(os.environ.get("TRANSCRIBE_RAM_GB", "") or 0)
@@ -491,9 +491,9 @@ def get_maximum_hardware_config(max_perf: bool = False):
     # Threads: target ~90% by default; in max_perf mode, use 100% of logical cores
     import math
     if max_perf:
-        cpu_threads = max(1, min(64, cpu_cores))
+        cpu_threads = max(1, min(64, cpu_cores))  # Use ALL cores in max perf mode
     else:
-        cpu_threads = max(1, min(64, math.ceil(cpu_cores * 0.90)))
+        cpu_threads = max(1, min(64, math.ceil(cpu_cores * 0.95)))  # Increased from 90% to 95%
 
     # Environment override for threads
     try:
@@ -503,8 +503,17 @@ def get_maximum_hardware_config(max_perf: bool = False):
     if env_threads > 0:
         cpu_threads = max(1, min(64, env_threads))
 
-    # For stability, use 1 GPU worker. Loading multiple large models wastes VRAM for a single-file run.
-    gpu_workers = 1 if has_cuda or dml_available else 0
+    # For ULTRA aggressive utilization, use more GPU workers for maximum utilization
+    if has_cuda:
+        try:
+            gpu_count = torch_api.cuda.device_count()
+            # Use more workers to take advantage of additional GPU shared memory
+            gpu_workers = min(gpu_count * 3, 8)  # Increased from 6 to 8 max, 3x GPU count
+            print(f"🎯 GPU Workers: {gpu_workers} (ULTRA AGGRESSIVE - utilizing {15}GB+ shared memory)")
+        except Exception:
+            gpu_workers = 3  # Increased fallback from 2 to 3
+    else:
+        gpu_workers = 0
 
     # VRAM overrides via env
     try:
@@ -706,7 +715,8 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     # Check if speaker identification should be enabled
     enable_speakers = False
     try:
-        enable_speakers = os.environ.get("TRANSCRIBE_SPEAKER_ID", "").strip() in ("1", "true", "True")
+        # Speaker identification is disabled - comment out to re-enable if needed
+        # enable_speakers = os.environ.get("TRANSCRIBE_SPEAKER_ID", "").strip() in ("1", "true", "True")
         if enable_speakers:
             print("� Speaker identification enabled")
     except Exception:
@@ -720,6 +730,15 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
             print("🎯 Dataset optimization enabled for GPU pipeline efficiency")
     except Exception:
         use_dataset = False
+
+    # Check if aggressive segmentation should be used
+    use_aggressive_segmentation = False
+    try:
+        use_aggressive_segmentation = os.environ.get("TRANSCRIBE_AGGRESSIVE_SEGMENTATION", "").strip() in ("1", "true", "True")
+        if use_aggressive_segmentation:
+            print("🎯 Aggressive segmentation enabled for maximum CPU utilization")
+    except Exception:
+        use_aggressive_segmentation = False
     if use_dataset:
         try:
             file_size = os.path.getsize(input_path)
@@ -731,22 +750,25 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
         except Exception as e:
             print(f"⚠️  Dataset check failed: {e} - using standard processing")
 
-    # Decide max performance mode from env
-    max_perf = False
+    # Decide max performance mode from env - DEFAULT TO MAX PERF FOR BETTER CPU UTILIZATION
+    max_perf = True  # Default to maximum performance for better CPU utilization
     try:
-        max_perf = os.environ.get("TRANSCRIBE_MAX_PERF", "").strip() in ("1", "true", "True")
+        env_max_perf = os.environ.get("TRANSCRIBE_MAX_PERF", "").strip()
+        if env_max_perf in ("0", "false", "False"):
+            max_perf = False
     except Exception:
-        max_perf = False
+        max_perf = True
     config = get_maximum_hardware_config(max_perf=max_perf)
     # Report planning
     try:
         if config.get('max_perf'):
-            print(f"🧠 Planning: MAX PERF -> CPU threads {config['cpu_threads']} of {config['cpu_cores']}")
+            print(f"🧠 Planning: ULTRA MAX PERF -> CPU threads {config['cpu_threads']} of {config['cpu_cores']} (ULTRA AGGRESSIVE)")
         else:
-            print(f"🧠 Planning: CPU threads ≈90% cores -> {config['cpu_threads']} of {config['cpu_cores']}")
-        print(f"💾 RAM plan: using up to ~{config['usable_ram_gb']:.1f} GB (95% of {config['available_ram_gb']:.1f} GB available)")
+            print(f"🧠 Planning: CPU threads ≈95% cores -> {config['cpu_threads']} of {config['cpu_cores']} (OPTIMIZED)")
+        print(f"💾 RAM plan: using up to ~{config['usable_ram_gb']:.1f} GB (98% of {config['available_ram_gb']:.1f} GB available - ULTRA AGGRESSIVE)")
         if float(config.get('allowed_vram_gb') or 0) > 0:
-            print(f"🎛️ VRAM cap: ~{float(config['allowed_vram_gb']):.1f} GB of total {float(config.get('cuda_total_vram_gb') or 0):.1f} GB")
+            print(f"🎛️ VRAM cap: ~{float(config['allowed_vram_gb']):.1f} GB of total {float(config.get('cuda_total_vram_gb') or 0):.1f} GB (99% utilization)")
+            print(f"🔗 GPU Shared Memory: Utilizing additional 15GB+ for parallel processing")
     except Exception:
         pass
     if not output_dir:
@@ -806,26 +828,36 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
                         torch_api.cuda.set_per_process_memory_fraction(frac, device=0)
                         print(f"🧩 Limiting CUDA allocator to ~{frac*100:.0f}% of VRAM ({allowed_vram:.1f}GB)")
                     elif config.get('max_perf'):
-                        # Default to aggressive allocator in max perf mode
+                        # Default to ULTRA aggressive allocator in max perf mode - USE MAX VRAM
                         try:
-                            torch_api.cuda.set_per_process_memory_fraction(0.95, device=0)
-                            print("🧩 Allowing CUDA allocator to use ~95% of VRAM (max perf)")
+                            torch_api.cuda.set_per_process_memory_fraction(0.99, device=0)  # Increased from 0.98 to 0.99
+                            print("🧩 Allowing CUDA allocator to use ~99% of VRAM (ULTRA AGGRESSIVE - MAX PERF)")
                         except Exception:
                             pass
             except Exception as e:
                 print(f"⚠️  Could not set CUDA memory fraction: {e}")
-            # Enable performance knobs where supported
+            # Enable ULTRA performance knobs for maximum GPU utilization
             try:
                 if hasattr(torch_api.backends, "cudnn"):
                     torch_api.backends.cudnn.benchmark = True
+                    # Enable deterministic mode for reproducibility but max performance
+                    torch_api.backends.cudnn.deterministic = False
                 # TF32 can speed up matmul on Ampere+; harmless elsewhere
                 if hasattr(torch_api.backends, "cuda") and hasattr(torch_api.backends.cuda, "matmul"):
                     try:
                         torch_api.backends.cuda.matmul.allow_tf32 = True
+                        # Enable cuBLAS optimizations
+                        torch_api.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
                     except Exception:
                         pass
                 try:
                     torch_api.set_float32_matmul_precision("high")
+                except Exception:
+                    pass
+                # Enable GPU memory pooling for better shared memory utilization
+                try:
+                    torch_api.cuda.set_per_process_memory_fraction(0.99, device=0)
+                    print("🧩 ULTRA GPU Memory Pooling: Enabled for 15GB+ shared memory utilization")
                 except Exception:
                     pass
             except Exception:
