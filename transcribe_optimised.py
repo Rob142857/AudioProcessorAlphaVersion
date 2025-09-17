@@ -577,6 +577,95 @@ def force_gpu_memory_cleanup():
     gc.collect()
 
 
+def identify_speakers_from_segments(segments, silence_threshold=1.5):
+    """
+    Basic speaker identification using timing analysis.
+    Assigns speaker labels (Speaker 1, Speaker 2, etc.) based on pauses between segments.
+
+    Args:
+        segments: List of Whisper segments with start/end times and text
+        silence_threshold: Minimum silence duration (seconds) to consider a speaker change
+
+    Returns:
+        List of segments with speaker labels added
+    """
+    if not segments or not isinstance(segments, list):
+        return segments
+
+    # Sort segments by start time
+    sorted_segments = sorted(segments, key=lambda x: x.get("start", 0))
+
+    labeled_segments = []
+    current_speaker = 1
+    last_end_time = 0
+
+    for i, segment in enumerate(sorted_segments):
+        start_time = segment.get("start", 0)
+        end_time = segment.get("end", 0)
+        text = segment.get("text", "").strip()
+
+        # Skip empty segments
+        if not text:
+            continue
+
+        # Check if there's a significant pause indicating speaker change
+        time_gap = start_time - last_end_time
+
+        if time_gap >= silence_threshold and i > 0:
+            current_speaker += 1
+
+        # Create labeled segment
+        labeled_segment = dict(segment)
+        labeled_segment["speaker"] = f"Speaker {current_speaker}"
+        labeled_segments.append(labeled_segment)
+
+        last_end_time = end_time
+
+    return labeled_segments
+
+
+def format_text_with_speakers(segments, include_timestamps=False):
+    """
+    Format transcription text with speaker labels.
+
+    Args:
+        segments: List of segments with speaker labels
+        include_timestamps: Whether to include timestamps in output
+
+    Returns:
+        Formatted text string with speaker labels
+    """
+    if not segments:
+        return ""
+
+    formatted_parts = []
+    current_speaker = None
+
+    for segment in segments:
+        speaker = segment.get("speaker", "Unknown")
+        text = segment.get("text", "").strip()
+
+        if not text:
+            continue
+
+        # Add speaker label if it changed
+        if speaker != current_speaker:
+            if include_timestamps and segment.get("start") is not None:
+                start_time = segment["start"]
+                minutes = int(start_time // 60)
+                seconds = int(start_time % 60)
+                timestamp = f"[{minutes:02d}:{seconds:02d}]"
+                formatted_parts.append(f"\n{speaker} {timestamp}: {text}")
+            else:
+                formatted_parts.append(f"\n{speaker}: {text}")
+            current_speaker = speaker
+        else:
+            # Continue with same speaker
+            formatted_parts.append(text)
+
+    return " ".join(formatted_parts).strip()
+
+
 def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override: Optional[int] = None):
     """
     High-quality, simplified single-file transcription on best available device.
@@ -596,24 +685,31 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
         from text_processor_enhanced import create_enhanced_processor
         _enhanced_processor_available = True
     except ImportError:
-        from deepmultilingualpunctuation import PunctuationModel  # type: ignore
         _enhanced_processor_available = False
+        create_enhanced_processor = None  # Define it to avoid unbound variable error
     from transcribe import (
         get_media_duration, split_into_paragraphs, format_duration,
     )
+
+    # Speaker identification imports
+    try:
+        import webrtcvad
+        _vad_available = True
+    except ImportError:
+        _vad_available = False
 
     start_time = time.time()
     print("🚀 MAXIMUM PERFORMANCE AUTO-DETECTED TRANSCRIPTION")
     print(f"📁 Input: {os.path.basename(input_path)}")
 
-    # Check if dataset optimization should be used
-    use_dataset = False
+    # Check if speaker identification should be enabled
+    enable_speakers = False
     try:
-        use_dataset = os.environ.get("TRANSCRIBE_USE_DATASET", "").strip() in ("1", "true", "True")
-        if use_dataset:
-            print("🎯 Dataset optimization enabled for GPU pipeline efficiency")
+        enable_speakers = os.environ.get("TRANSCRIBE_SPEAKER_ID", "").strip() in ("1", "true", "True")
+        if enable_speakers:
+            print("� Speaker identification enabled")
     except Exception:
-        use_dataset = False
+        enable_speakers = False
 
     # Use dataset optimization for large files if enabled
     if use_dataset:
@@ -821,6 +917,11 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     start_watch = time.time()
     timeout_minutes = 60
     print(f"⏱️  Monitoring transcription progress (timeout: {timeout_minutes} minutes)...")
+
+    # Initialize CPU/RAM monitoring
+    import psutil
+    process = psutil.Process(os.getpid())
+
     while not transcription_complete and (time.time() - start_watch) < (timeout_minutes * 60):
         time.sleep(5)
         if torch_api.cuda.is_available() and chosen_device == "cuda":
@@ -829,6 +930,22 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
                 total = torch_api.cuda.get_device_properties(0).total_memory / (1024 ** 3)
                 pct = (used / total) * 100
                 elapsed = time.time() - start_watch
+
+                # Get CPU and RAM usage
+                cpu_percent = process.cpu_percent(interval=None)
+                ram_used = process.memory_info().rss / (1024 ** 3)  # GB
+                ram_total = psutil.virtual_memory().total / (1024 ** 3)  # GB
+                ram_percent = (ram_used / ram_total) * 100
+
+                # Format time: use h:m:s after 800 seconds
+                if elapsed >= 800:
+                    hours = int(elapsed // 3600)
+                    minutes = int((elapsed % 3600) // 60)
+                    seconds = int(elapsed % 60)
+                    time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                else:
+                    time_str = f"{elapsed:.0f}s"
+
                 util_txt = ""
                 if nvml is not None:
                     try:
@@ -837,7 +954,9 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
                         util_txt = f" | GPU Util: {util.gpu}% | Mem Util: {util.memory}%"
                     except Exception:
                         util_txt = ""
-                print(f"📊 Progress: {elapsed:.0f}s | GPU Mem: {used:.1f}/{total:.1f}GB ({pct:.1f}%)" + util_txt)
+
+                print(f"📊 Progress: {time_str} | GPU Mem: {used:.1f}/{total:.1f}GB ({pct:.1f}%) | CPU: {cpu_percent:.1f}% | RAM: {ram_used:.1f}/{ram_total:.1f}GB ({ram_percent:.1f}%){util_txt}")
+
                 if pct > 95:
                     torch_api.cuda.empty_cache()
             except Exception as e:
@@ -875,6 +994,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     # Extract text (with artifact suppression around music)
     result = transcription_result
     full_text = ""
+    segments_with_speakers = []
     removed_segments = []
     kept_count = 0
     if isinstance(result, dict):
@@ -891,6 +1011,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
                 return any(m in t for m in markers)
 
             cleaned_parts = []
+            cleaned_segments = []
             for seg in segments:
                 seg_text = str(seg.get("text", "")).strip()
                 avg_logprob = seg.get("avg_logprob", 0.0)
@@ -902,6 +1023,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
 
                 if seg_text and not (suspicious and low_confidence):
                     cleaned_parts.append(seg_text)
+                    cleaned_segments.append(seg)
                     kept_count += 1
                 else:
                     if seg_text:
@@ -913,6 +1035,18 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
                             "end": seg.get("end"),
                         })
             full_text = (" ".join(cleaned_parts)).strip()
+
+            # Apply speaker identification to cleaned segments
+            try:
+                segments_with_speakers = identify_speakers_from_segments(cleaned_segments)
+                speaker_text = format_text_with_speakers(segments_with_speakers)
+                if speaker_text:
+                    full_text = speaker_text
+                    print("✅ Speaker identification completed")
+                else:
+                    print("⚠️  Speaker identification failed, using standard text")
+            except Exception as e:
+                print(f"⚠️  Speaker identification failed: {e}")
         else:
             text_result = result.get("text", "")
             full_text = text_result.strip() if isinstance(text_result, str) else str(text_result).strip()
@@ -935,7 +1069,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
 
     # Post-processing with enhanced text processing
     try:
-        if _enhanced_processor_available:
+        if _enhanced_processor_available and create_enhanced_processor is not None:
             # Use enhanced processor with spaCy and custom rules
             processor = create_enhanced_processor(use_spacy=True, use_transformers=False)
             t0 = time.time()
