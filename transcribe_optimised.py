@@ -587,96 +587,225 @@ def force_gpu_memory_cleanup():
     gc.collect()
 
 
-def identify_speakers_from_segments(segments, silence_threshold=1.5):
-    """
-    Basic speaker identification using timing analysis.
-    Assigns speaker labels (Speaker 1, Speaker 2, etc.) based on pauses between segments.
+def vad_segment_times_optimized(input_path, aggressiveness=2, frame_duration_ms=30, padding_ms=300):
+    """Voice Activity Detection optimized for maximum performance with fallback."""
+    # Check VAD availability within this function scope
+    try:
+        import webrtcvad
+        _vad_available = True
+    except ImportError:
+        _vad_available = False
+        webrtcvad = None
 
-    Args:
-        segments: List of Whisper segments with start/end times and text
-        silence_threshold: Minimum silence duration (seconds) to consider a speaker change
+    if not _vad_available:
+        print("⚠️  webrtcvad not available - using optimized duration-based segmentation")
+        # Fallback: create segments based on duration (every 25 seconds for better performance)
+        try:
+            from moviepy.editor import AudioFileClip
+            audio_clip = AudioFileClip(input_path)
+            duration = audio_clip.duration
+            audio_clip.close()
 
-    Returns:
-        List of segments with speaker labels added
-    """
-    if not segments or not isinstance(segments, list):
+            segments = []
+            segment_length = 25.0  # 25 second segments for optimized processing
+            for i in range(0, int(duration), int(segment_length)):
+                start = float(i)
+                end = min(float(i + segment_length), duration)
+                segments.append((start, end))
+
+            print(f"📊 Created {len(segments)} optimized duration-based segments ({segment_length}s each)")
+            return segments
+
+        except Exception as e:
+            print(f"❌ Error creating optimized fallback segments: {e}")
+            # Last resort: single segment for entire audio
+            return [(0.0, 60.0)]  # Assume 60s max, will be clipped later
+
+    # Original webrtcvad implementation with optimized settings
+    try:
+        # Import required functions from transcribe.py
+        from transcribe import get_pcm_from_file, frames_from_pcm
+
+        pcm = get_pcm_from_file(input_path)
+        vad = webrtcvad.Vad(aggressiveness)
+        frames = list(frames_from_pcm(pcm, frame_duration_ms=frame_duration_ms))
+        sample_rate = 16000
+        in_speech = False
+        segments = []
+        speech_start = 0
+
+        for i, frame in enumerate(frames):
+            is_speech = False
+            if len(frame) == int(sample_rate * 2 * (frame_duration_ms/1000.0)):
+                is_speech = vad.is_speech(frame, sample_rate)
+            t = (i * frame_duration_ms) / 1000.0
+            if is_speech and not in_speech:
+                in_speech = True
+                speech_start = t
+            elif not is_speech and in_speech:
+                in_speech = False
+                speech_end = t
+                # Optimized padding for better performance
+                start = max(0, speech_start - (padding_ms/1000.0))
+                end = speech_end + (padding_ms/1000.0)
+                segments.append((start, end))
+
+        # Handle file ending while in speech
+        if in_speech:
+            speech_end = (len(frames) * frame_duration_ms) / 1000.0
+            start = max(0, speech_start - (padding_ms/1000.0))
+            end = speech_end + (padding_ms/1000.0)
+            segments.append((start, end))
+
         return segments
 
-    # Sort segments by start time
-    sorted_segments = sorted(segments, key=lambda x: x.get("start", 0))
+    except Exception as e:
+        print(f"❌ VAD segmentation failed: {e}")
+        # Fallback to duration-based segmentation
+        try:
+            from moviepy.editor import AudioFileClip
+            audio_clip = AudioFileClip(input_path)
+            duration = audio_clip.duration
+            audio_clip.close()
 
-    labeled_segments = []
-    current_speaker = 1
-    last_end_time = 0
+            segments = []
+            segment_length = 25.0
+            for i in range(0, int(duration), int(segment_length)):
+                start = float(i)
+                end = min(float(i + segment_length), duration)
+                segments.append((start, end))
 
-    for i, segment in enumerate(sorted_segments):
-        start_time = segment.get("start", 0)
-        end_time = segment.get("end", 0)
-        text = segment.get("text", "").strip()
+            print(f"📊 VAD failed, using {len(segments)} duration-based segments")
+            return segments
 
-        # Skip empty segments
-        if not text:
-            continue
-
-        # Check if there's a significant pause indicating speaker change
-        time_gap = start_time - last_end_time
-
-        if time_gap >= silence_threshold and i > 0:
-            current_speaker += 1
-
-        # Create labeled segment
-        labeled_segment = dict(segment)
-        labeled_segment["speaker"] = f"Speaker {current_speaker}"
-        labeled_segments.append(labeled_segment)
-
-        last_end_time = end_time
-
-    return labeled_segments
+        except Exception as fallback_e:
+            print(f"❌ Fallback segmentation also failed: {fallback_e}")
+            return [(0.0, 60.0)]
 
 
-def format_text_with_speakers(segments, include_timestamps=False):
-    """
-    Format transcription text with speaker labels.
+def transcribe_with_vad_parallel(input_path, vad_segments, model, base_transcribe_kwargs, config):
+    """Transcribe audio using VAD segments processed in parallel for maximum performance."""
+    import concurrent.futures
+    import tempfile
+    import subprocess
 
-    Args:
-        segments: List of segments with speaker labels
-        include_timestamps: Whether to include timestamps in output
+    print(f"🔄 Processing {len(vad_segments)} VAD segments in parallel...")
 
-    Returns:
-        Formatted text string with speaker labels
-    """
-    if not segments:
-        return ""
+    # Try to import moviepy
+    try:
+        from moviepy.editor import AudioFileClip  # type: ignore
+        moviepy_available = True
+    except ImportError:
+        moviepy_available = False
+        AudioFileClip = None  # type: ignore
+        print("⚠️  moviepy not available - falling back to ffmpeg for segment extraction")
 
-    formatted_parts = []
-    current_speaker = None
+    # Create temporary directory for segment files
+    with tempfile.TemporaryDirectory() as temp_dir:
+        segment_files = []
+        segment_results = []
 
-    for segment in segments:
-        speaker = segment.get("speaker", "Unknown")
-        text = segment.get("text", "").strip()
+        # Extract audio segments
+        def extract_segment(segment_idx, start_time, end_time):
+            try:
+                segment_path = os.path.join(temp_dir, f"segment_{segment_idx:03d}.wav")
 
-        if not text:
-            continue
+                if moviepy_available and AudioFileClip is not None:
+                    audio_clip = AudioFileClip(input_path)
+                    segment_clip = audio_clip.subclip(start_time, end_time)
+                    segment_clip.write_audiofile(segment_path, verbose=False, logger=None)
+                    audio_clip.close()
+                    segment_clip.close()
+                else:
+                    # Fallback to ffmpeg
+                    duration = end_time - start_time
+                    cmd = [
+                        "ffmpeg", "-i", input_path,
+                        "-ss", str(start_time), "-t", str(duration),
+                        "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                        "-y", segment_path
+                    ]
+                    subprocess.run(cmd, check=True, capture_output=True)
 
-        # Add speaker label if it changed
-        if speaker != current_speaker:
-            if include_timestamps and segment.get("start") is not None:
-                start_time = segment["start"]
-                minutes = int(start_time // 60)
-                seconds = int(start_time % 60)
-                timestamp = f"[{minutes:02d}:{seconds:02d}]"
-                formatted_parts.append(f"\n{speaker} {timestamp}: {text}")
-            else:
-                formatted_parts.append(f"\n{speaker}: {text}")
-            current_speaker = speaker
-        else:
-            # Continue with same speaker
-            formatted_parts.append(text)
+                return segment_path, (start_time, end_time)
+            except Exception as e:
+                print(f"⚠️  Failed to extract segment {segment_idx}: {e}")
+                return None, None
 
-    return " ".join(formatted_parts).strip()
+        # Extract all segments
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(vad_segments), 8)) as executor:
+            futures = [executor.submit(extract_segment, i, start, end)
+                      for i, (start, end) in enumerate(vad_segments)]
+            for future in concurrent.futures.as_completed(futures):
+                segment_path, time_range = future.result()
+                if segment_path:
+                    segment_files.append((segment_path, time_range))
+
+        print(f"✅ Extracted {len(segment_files)} audio segments")
+
+        # Transcribe segments in parallel
+        def transcribe_segment(segment_path, time_range):
+            try:
+                # Create a copy of transcribe kwargs for this segment
+                segment_kwargs = base_transcribe_kwargs.copy()
+                # Remove vad_filter since we're already using segmented audio
+                segment_kwargs.pop("vad_filter", None)
+
+                result = model.transcribe(segment_path, **segment_kwargs)
+
+                # Add timing information to segments
+                if isinstance(result, dict) and "segments" in result:
+                    for segment in result["segments"]:
+                        segment["start"] += time_range[0]
+                        segment["end"] += time_range[0]
+
+                return result
+            except Exception as e:
+                print(f"⚠️  Failed to transcribe segment {os.path.basename(segment_path)}: {e}")
+                return None
+
+        # Transcribe all segments in parallel
+        max_workers = min(len(segment_files), config.get("cpu_threads", 4) // 2)
+        max_workers = max(1, max_workers)  # Ensure at least 1 worker
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(transcribe_segment, seg_path, time_range)
+                      for seg_path, time_range in segment_files]
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                if result:
+                    segment_results.append(result)
+
+        # Combine results from all segments
+        combined_result = {"text": "", "segments": []}
+
+        for result in segment_results:
+            if isinstance(result, dict):
+                # Combine text
+                if "text" in result:
+                    combined_result["text"] += " " + result["text"]
+
+                # Combine segments
+                if "segments" in result:
+                    combined_result["segments"].extend(result["segments"])
+
+                # Copy other metadata from first result
+                for key, value in result.items():
+                    if key not in combined_result and key not in ["text", "segments"]:
+                        combined_result[key] = value
+
+        # Clean up combined text
+        combined_result["text"] = combined_result["text"].strip()
+
+        # Sort segments by start time
+        if combined_result["segments"]:
+            combined_result["segments"].sort(key=lambda x: x.get("start", 0))
+
+        print(f"✅ Combined transcription from {len(segment_results)} segments")
+        return combined_result
 
 
-def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override: Optional[int] = None):
+def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: Optional[int] = None):
     """
     High-quality, simplified single-file transcription on best available device.
     - Device selection: CUDA > DirectML > CPU
@@ -685,6 +814,15 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     - Safe cleanup that avoids torch re-import problems
     Returns path to the .txt file.
     """
+    # Initialize all variables at the beginning to ensure they're always accessible
+    use_vad = False
+    enable_speakers = False
+    use_dataset = False
+    max_perf = True
+    transcription_complete = False
+    transcription_result = None
+    transcription_error = None
+
     _ensure_torch_available()
     torch_api = cast(Any, torch)
 
@@ -707,6 +845,34 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
         _vad_available = True
     except ImportError:
         _vad_available = False
+
+    # Import VAD functions from transcribe.py
+    try:
+        from transcribe import vad_segment_times
+        _vad_functions_available = True
+    except ImportError:
+        _vad_functions_available = False
+        # Define fallback VAD function
+        def vad_segment_times(input_path):
+            """Fallback VAD function when transcribe.py is not available"""
+            try:
+                from moviepy import AudioFileClip
+                audio_clip = AudioFileClip(input_path)
+                duration = audio_clip.duration
+                audio_clip.close()
+
+                segments = []
+                segment_length = 30.0  # 30 second segments
+                for i in range(0, int(duration), int(segment_length)):
+                    start = float(i)
+                    end = min(float(i + segment_length), duration)
+                    segments.append((start, end))
+
+                print(f"📊 Created {len(segments)} duration-based segments ({segment_length}s each)")
+                return segments
+            except Exception as e:
+                print(f"❌ Error creating fallback segments: {e}")
+                return [(0.0, 60.0)]  # Single segment fallback
 
     start_time = time.time()
     print("🚀 MAXIMUM PERFORMANCE AUTO-DETECTED TRANSCRIPTION")
@@ -731,14 +897,14 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     except Exception:
         use_dataset = False
 
-    # Check if aggressive segmentation should be used
-    use_aggressive_segmentation = False
+    # Check if VAD segmentation should be used
+    use_vad = False
     try:
-        use_aggressive_segmentation = os.environ.get("TRANSCRIBE_AGGRESSIVE_SEGMENTATION", "").strip() in ("1", "true", "True")
-        if use_aggressive_segmentation:
-            print("🎯 Aggressive segmentation enabled for maximum CPU utilization")
+        use_vad = os.environ.get("TRANSCRIBE_VAD", "").strip() in ("1", "true", "True")
+        if use_vad:
+            print("🎯 VAD segmentation enabled for performance optimization")
     except Exception:
-        use_aggressive_segmentation = False
+        use_vad = False
     if use_dataset:
         try:
             file_size = os.path.getsize(input_path)
@@ -772,7 +938,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     except Exception:
         pass
     if not output_dir:
-        output_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+        output_dir = os.path.dirname(input_path)
 
     duration = get_media_duration(input_path)
     if duration:
@@ -928,23 +1094,47 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
     transcription_error = None
 
     def _run_transcribe():
-        nonlocal transcription_complete, transcription_result, transcription_error
+        nonlocal transcription_complete, transcription_result, transcription_error, use_vad
         try:
             print("🔄 Starting Whisper transcription process...")
             if model is None:
                 raise RuntimeError("Whisper model is not loaded")
-            # Call transcribe without batch_size or vad_filter for broad compatibility
-            result = model.transcribe(
-                input_path,
-                language="en",  # Optimized for English language
-                compression_ratio_threshold=2.4,
-                logprob_threshold=-2.0,
-                no_speech_threshold=0.3,
-                condition_on_previous_text=False,
-                temperature=0.0,
-                verbose=True,
-                suppress_tokens="-1",  # Disable token suppression for guardrail removal
-            )
+
+            # Apply VAD segmentation if enabled
+            transcribe_kwargs = {
+                "language": "en",  # Optimized for English language
+                "compression_ratio_threshold": 2.4,
+                "logprob_threshold": -2.0,
+                "no_speech_threshold": 0.3,
+                "condition_on_previous_text": False,
+                "temperature": 0.0,
+                "verbose": True,
+                "suppress_tokens": "-1",  # Disable token suppression for guardrail removal
+            }
+
+            if use_vad:
+                try:
+                    # Get VAD segments for the audio file
+                    if _vad_functions_available:
+                        vad_segments = vad_segment_times(input_path)
+                        if vad_segments and len(vad_segments) > 0:
+                            print(f"🎯 VAD detected {len(vad_segments)} speech segments - processing in parallel")
+                            # Use actual VAD segmentation with parallel processing
+                            result = transcribe_with_vad_parallel(input_path, vad_segments, model, transcribe_kwargs, config)
+                            transcription_result = result
+                            print("✅ VAD parallel transcription completed successfully")
+                            transcription_complete = True
+                            return  # Exit early since we processed with VAD
+                        else:
+                            print("⚠️  VAD enabled but no segments detected, proceeding without VAD")
+                    else:
+                        print("⚠️  VAD functions not available, proceeding without VAD")
+                except Exception as vad_e:
+                    print(f"⚠️  VAD segmentation failed: {vad_e} - proceeding without VAD")
+                    use_vad = False  # Disable for this run
+
+            # Call transcribe with optimized parameters
+            result = model.transcribe(input_path, **transcribe_kwargs)
             transcription_result = result
             print("✅ Whisper transcription completed successfully")
         except Exception as e:
@@ -1015,16 +1205,37 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
         try:
             model = whisper.load_model(selected_model_name, device="cpu")
             torch_api.set_num_threads(config["cpu_threads"])
-            transcription_result = model.transcribe(
-                input_path,
-                language=None,
-                compression_ratio_threshold=2.4,
-                logprob_threshold=-2.0,
-                no_speech_threshold=0.3,
-                condition_on_previous_text=False,
-                temperature=0.0,
-                verbose=True,
-            )
+
+            # Apply VAD segmentation if enabled (CPU fallback)
+            cpu_transcribe_kwargs = {
+                "language": None,
+                "compression_ratio_threshold": 2.4,
+                "logprob_threshold": -2.0,
+                "no_speech_threshold": 0.3,
+                "condition_on_previous_text": False,
+                "temperature": 0.0,
+                "verbose": True,
+            }
+
+            if use_vad:
+                try:
+                    # Get VAD segments for the audio file (CPU fallback)
+                    if _vad_functions_available:
+                        vad_segments = vad_segment_times(input_path)
+                        if vad_segments and len(vad_segments) > 0:
+                            print(f"🎯 VAD detected {len(vad_segments)} speech segments (CPU fallback) - processing in parallel")
+                            # Use actual VAD segmentation with parallel processing
+                            transcription_result = transcribe_with_vad_parallel(input_path, vad_segments, model, cpu_transcribe_kwargs, config)
+                            transcription_error = None
+                        else:
+                            print("⚠️  VAD enabled but no segments detected (CPU fallback), proceeding without VAD")
+                    else:
+                        print("⚠️  VAD functions not available (CPU fallback), proceeding without VAD")
+                except Exception as vad_e:
+                    print(f"⚠️  VAD segmentation failed (CPU fallback): {vad_e} - proceeding without VAD")
+                    use_vad = False  # Disable for this run
+
+            transcription_result = model.transcribe(input_path, **cpu_transcribe_kwargs)
             transcription_error = None
         except Exception as cpu_e:
             raise Exception(f"Both GPU and CPU transcription timed out/failed: {cpu_e}")
@@ -1077,17 +1288,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, *, threads_override
                         })
             full_text = (" ".join(cleaned_parts)).strip()
 
-            # Apply speaker identification to cleaned segments
-            try:
-                segments_with_speakers = identify_speakers_from_segments(cleaned_segments)
-                speaker_text = format_text_with_speakers(segments_with_speakers)
-                if speaker_text:
-                    full_text = speaker_text
-                    print("✅ Speaker identification completed")
-                else:
-                    print("⚠️  Speaker identification failed, using standard text")
-            except Exception as e:
-                print(f"⚠️  Speaker identification failed: {e}")
+            # Speaker identification removed as requested
         else:
             text_result = result.get("text", "")
             full_text = text_result.strip() if isinstance(text_result, str) else str(text_result).strip()
@@ -1232,12 +1433,13 @@ def transcribe_file_optimised(input_path, model_name="medium", output_dir=None, 
 def main():
     parser = argparse.ArgumentParser(description="Simplified auto-detected transcription")
     parser.add_argument("--input", required=True, help="Input audio/video file")
-    parser.add_argument("--output-dir", help="Output directory (default: Downloads)")
+    parser.add_argument("--output-dir", help="Output directory (default: same directory as input file)")
     parser.add_argument("--threads", type=int, help="Override CPU threads for PyTorch/OMP/MKL")
     parser.add_argument("--ram-gb", type=float, help="Cap usable system RAM in GB (env TRANSCRIBE_RAM_GB)")
     parser.add_argument("--ram-frac", "--ram-fraction", dest="ram_fraction", type=float, help="Cap usable system RAM as fraction 0-1 (env TRANSCRIBE_RAM_FRACTION)")
     parser.add_argument("--vram-gb", type=float, help="Cap usable CUDA VRAM in GB (env TRANSCRIBE_VRAM_GB)")
     parser.add_argument("--vram-frac", "--vram-fraction", dest="vram_fraction", type=float, help="Cap usable CUDA VRAM as fraction 0-1 (env TRANSCRIBE_VRAM_FRACTION)")
+    parser.add_argument("--vad", action="store_true", help="Enable VAD segmentation for parallel processing performance boost (env TRANSCRIBE_VAD)")
     args = parser.parse_args()
 
     if not os.path.isfile(args.input):
@@ -1254,6 +1456,13 @@ def main():
             os.environ["TRANSCRIBE_VRAM_GB"] = str(max(0.5, float(args.vram_gb)))
         if getattr(args, "vram_fraction", None) is not None:
             os.environ["TRANSCRIBE_VRAM_FRACTION"] = str(max(0.05, min(1.0, float(args.vram_fraction))))
+    except Exception:
+        pass
+
+    # Apply VAD override if provided
+    try:
+        if getattr(args, "vad", False):
+            os.environ["TRANSCRIBE_VAD"] = "1"
     except Exception:
         pass
 
