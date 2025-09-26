@@ -35,6 +35,98 @@ def _ensure_torch_available():
         raise RuntimeError(f"PyTorch is required but failed to import: {_torch_import_error}")
 
 
+def preprocess_audio_with_padding(input_path: str, temp_dir: str = None) -> str:
+    """
+    Preprocess audio/video file to high-quality MP3 with silence padding.
+    
+    Args:
+        input_path: Path to input audio/video file
+        temp_dir: Directory for temporary files (default: system temp)
+        
+    Returns:
+        Path to the preprocessed MP3 file with padding
+        
+    Features:
+    - Converts any audio/video format to high-quality MP3 (320kbps)
+    - Adds 1 second of silence at the beginning
+    - Adds 1 second of silence at the end  
+    - Normalizes audio levels
+    - Prevents missed words at start/end of recordings
+    """
+    import tempfile
+    import subprocess
+    import shutil
+    
+    if temp_dir is None:
+        temp_dir = tempfile.gettempdir()
+    
+    # Generate unique temp filename
+    base_name = os.path.splitext(os.path.basename(input_path))[0]
+    temp_output = os.path.join(temp_dir, f"preprocessed_{base_name}_{int(time.time())}.mp3")
+    
+    print(f"🔄 Preprocessing audio with silence padding...")
+    print(f"📁 Input: {os.path.basename(input_path)}")
+    print(f"📁 Temp output: {os.path.basename(temp_output)}")
+    
+    try:
+        # Check if ffmpeg is available
+        ffmpeg_cmd = shutil.which("ffmpeg")
+        if not ffmpeg_cmd:
+            # Try to use the bundled ffmpeg.exe if available
+            bundled_ffmpeg = os.path.join(os.path.dirname(__file__), "ffmpeg.exe")
+            if os.path.exists(bundled_ffmpeg):
+                ffmpeg_cmd = bundled_ffmpeg
+            else:
+                raise FileNotFoundError("ffmpeg not found. Please install ffmpeg or ensure it's in PATH.")
+        
+        # FFmpeg command to:
+        # 1. Add 1 second silence at start: adelay=1000|1000 (1000ms delay for both channels)
+        # 2. Normalize audio levels (loudnorm)
+        # 3. Add 1 second silence at end using apad
+        # 4. Convert to high-quality MP3 (320kbps)
+        cmd = [
+            ffmpeg_cmd,
+            "-i", input_path,
+            # Audio processing filters (combined in a single chain)
+            "-af", "adelay=1000|1000,loudnorm,apad=pad_len=48000",  # 1s delay -> normalize -> 1s pad (48kHz)
+            # High quality MP3 encoding
+            "-codec:a", "libmp3lame",
+            "-b:a", "320k",
+            "-ar", "48000",  # 48kHz sample rate for best quality
+            "-ac", "2",      # Stereo output
+            # Overwrite output file
+            "-y",
+            temp_output
+        ]
+        
+        print(f"🔧 Running ffmpeg preprocessing...")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        if result.returncode != 0:
+            print(f"❌ FFmpeg preprocessing failed:")
+            print(f"Error: {result.stderr}")
+            # Return original file if preprocessing fails
+            return input_path
+        
+        # Verify the output file was created and has reasonable size
+        if os.path.exists(temp_output) and os.path.getsize(temp_output) > 1024:  # > 1KB
+            print(f"✅ Audio preprocessing completed successfully")
+            print(f"📊 Original size: {os.path.getsize(input_path) / (1024*1024):.1f} MB")
+            print(f"📊 Preprocessed size: {os.path.getsize(temp_output) / (1024*1024):.1f} MB")
+            return temp_output
+        else:
+            print(f"⚠️  Preprocessing produced invalid output, using original file")
+            return input_path
+            
+    except subprocess.TimeoutExpired:
+        print(f"⚠️  FFmpeg preprocessing timed out after 5 minutes, using original file")
+        return input_path
+    except Exception as e:
+        print(f"⚠️  Audio preprocessing failed: {e}")
+        print(f"🔄 Continuing with original file...")
+        return input_path
+
+
 class AudioTranscriptionDataset(Dataset):
     """
     PyTorch Dataset for efficient audio transcription with GPU pipeline optimization.
@@ -167,18 +259,37 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     from docx import Document
     from deepmultilingualpunctuation import PunctuationModel
     from transcribe import (
-        get_media_duration, split_into_paragraphs, format_duration,
+        get_media_duration, split_into_paragraphs, format_duration, format_duration_minutes_only,
     )
 
     start_time = time.time()
     print("🚀 DATASET-OPTIMIZED TRANSCRIPTION WITH GPU PIPELINE EFFICIENCY")
     print(f"📁 Input: {os.path.basename(input_path)}")
 
+    # Preprocess audio with silence padding to prevent missed words
+    preprocessed_path = preprocess_audio_with_padding(input_path)
+    preprocessing_used = preprocessed_path != input_path
+    
+    if preprocessing_used:
+        print(f"✅ Using preprocessed audio with silence padding")
+        # Use the preprocessed file for all subsequent operations
+        working_input_path = preprocessed_path
+    else:
+        print(f"🔄 Using original audio file")
+        working_input_path = input_path
+
     # Check file size to determine if dataset optimization is beneficial
     try:
-        file_size = os.path.getsize(input_path)
+        file_size = os.path.getsize(working_input_path)
         if file_size < 50 * 1024 * 1024:  # Less than 50MB
             print("📊 File size < 50MB - falling back to standard processing for optimal performance")
+            # Clean up preprocessed file before returning
+            try:
+                if preprocessing_used and os.path.exists(working_input_path):
+                    os.remove(working_input_path)
+                    print("🧹 Removed temporary preprocessed audio file")
+            except Exception:
+                pass
             return transcribe_file_simple_auto(input_path, output_dir, threads_override=threads_override)
     except Exception:
         pass
@@ -190,7 +301,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     if not output_dir:
         output_dir = os.path.join(os.path.expanduser("~"), "Downloads")
 
-    duration = get_media_duration(input_path)
+    duration = get_media_duration(working_input_path)
     if duration:
         print(f"⏱️  Duration: {format_duration(duration)}")
 
@@ -265,7 +376,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         num_workers = min(2, config["cpu_threads"] // 2) if config["cpu_threads"] > 2 else 0
 
         dataloader = create_efficient_dataloader(
-            input_path,
+            working_input_path,
             batch_size=batch_size,
             num_workers=num_workers
         )
@@ -274,6 +385,13 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
 
     except Exception as e:
         print(f"⚠️  Dataset creation failed: {e} - falling back to standard processing")
+        # Cleanup preprocessed file before fallback
+        try:
+            if preprocessing_used and os.path.exists(working_input_path):
+                os.remove(working_input_path)
+                print("🧹 Removed temporary preprocessed audio file")
+        except Exception:
+            pass
         return transcribe_file_simple_auto(input_path, output_dir, threads_override=threads_override)
 
     # Process segments with dataset optimization
@@ -378,22 +496,10 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
 
     try:
         doc = Document()
-        doc.add_heading(f'Transcription: {base_name}', 0)
+        doc.add_heading(f'{base_name}', 0)
 
         elapsed_total = time.time() - start_time
-        speed_factor = None
-        try:
-            if duration and duration > 0:
-                speed_factor = max(0.01, float(duration) / float(elapsed_total))
-        except Exception:
-            speed_factor = None
-
-        if duration:
-            doc.add_paragraph(f'Duration: {format_duration(duration)}')
-        if speed_factor is not None:
-            doc.add_paragraph(f'Speed: {speed_factor:.2f}× realtime')
-        if selected_model_name:
-            doc.add_paragraph(f'Model: {selected_model_name} (Dataset Optimized)')
+        doc.add_paragraph(f'Transcription time: {format_duration_minutes_only(elapsed_total)}')
         doc.add_paragraph('')
 
         for para in formatted_text.split("\n\n"):
@@ -433,6 +539,14 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             print(f"📊 Memory after cleanup: RAM {mem.available / (1024**3):.1f}GB available")
     else:
         print(f"📊 Memory after cleanup: RAM {mem.available / (1024**3):.1f}GB available")
+
+    # Cleanup preprocessed file on completion
+    try:
+        if preprocessing_used and os.path.exists(working_input_path):
+            os.remove(working_input_path)
+            print("🧹 Removed temporary preprocessed audio file")
+    except Exception:
+        pass
 
     return txt_path
 
@@ -732,16 +846,20 @@ def transcribe_with_vad_parallel(input_path, vad_segments, model, base_transcrib
                 print(f"⚠️  Failed to extract segment {segment_idx}: {e}")
                 return None, None
 
-        # Extract all segments
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(vad_segments), 8)) as executor:
-            futures = [executor.submit(extract_segment, i, start, end)
-                      for i, (start, end) in enumerate(vad_segments)]
-            for future in concurrent.futures.as_completed(futures):
-                segment_path, time_range = future.result()
-                if segment_path:
-                    segment_files.append((segment_path, time_range))
-
-        print(f"✅ Extracted {len(segment_files)} audio segments")
+        # Extract all segments SEQUENTIALLY for perfect temporal order
+        print("🔧 Using sequential segment extraction for guaranteed order...")
+        
+        segment_files = []
+        for i, (start, end) in enumerate(vad_segments):
+            print(f"🎵 Extracting segment {i + 1}/{len(vad_segments)}: {start:.1f}s-{end:.1f}s")
+            segment_path, time_range = extract_segment(i, start, end)
+            if segment_path and time_range:
+                segment_files.append((segment_path, time_range))
+                print(f"✅ Extracted segment {i + 1}: {time_range[0]:.1f}s-{time_range[1]:.1f}s")
+            else:
+                print(f"⚠️  Failed to extract segment {i + 1}")
+        
+        print(f"✅ Extracted {len(segment_files)} audio segments in perfect temporal order")
 
         # Transcribe segments in parallel
         def transcribe_segment(segment_path, time_range):
@@ -773,40 +891,82 @@ def transcribe_with_vad_parallel(input_path, vad_segments, model, base_transcrib
             max_workers = min(len(segment_files), config.get("cpu_threads", 4) // 2)
         max_workers = max(1, min(max_workers, 12))  # Cap at 12 workers for stability
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(transcribe_segment, seg_path, time_range)
-                      for seg_path, time_range in segment_files]
-            for future in concurrent.futures.as_completed(futures):
-                result = future.result()
+        # SEQUENTIAL TRANSCRIPTION: Process segments one by one for guaranteed order
+        print("🔧 Using sequential transcription processing for perfect order...")
+        
+        segment_results = []
+        for i, (seg_path, time_range) in enumerate(segment_files):
+            print(f"🎯 Processing segment {i + 1}/{len(segment_files)}: {time_range[0]:.1f}s-{time_range[1]:.1f}s")
+            try:
+                result = transcribe_segment(seg_path, time_range)
                 if result:
                     segment_results.append(result)
+                    print(f"✅ Segment {i + 1} completed successfully")
+                else:
+                    print(f"⚠️  Segment {i + 1} returned empty result")
+            except Exception as e:
+                print(f"❌ Segment {i + 1} failed: {e}")
+        
+        print(f"📊 Successfully processed {len(segment_results)}/{len(segment_files)} segments in perfect temporal order")
 
-        # Combine results from all segments
+        # Combine results from all segments IN TEMPORAL ORDER
         combined_result = {"text": "", "segments": []}
+        text_parts = []
 
-        for result in segment_results:
-            if isinstance(result, dict):
-                # Combine text
-                if "text" in result:
-                    combined_result["text"] += " " + result["text"]
+        # Process results in temporal order, skipping None entries
+        for i, result in enumerate(segment_results):
+            if result is not None and isinstance(result, dict):
+                # Combine text in order
+                text_content = result.get("text", "")
+                if text_content and isinstance(text_content, str):
+                    text_parts.append(text_content.strip())
+                    print(f"📝 Added segment {i+1} text: '{text_content.strip()[:50]}...'")
 
-                # Combine segments
-                if "segments" in result:
-                    combined_result["segments"].extend(result["segments"])
+                # Combine segments in order
+                segments_data = result.get("segments", [])
+                if segments_data and isinstance(segments_data, list):
+                    combined_result["segments"].extend(segments_data)
 
-                # Copy other metadata from first result
-                for key, value in result.items():
-                    if key not in combined_result and key not in ["text", "segments"]:
-                        combined_result[key] = value
+                # Copy metadata from first valid result
+                if not combined_result.get("language") and result.get("language"):
+                    # Copy common metadata fields
+                    for key in ["language", "language_probability", "duration"]:
+                        if key in result and key not in combined_result:
+                            combined_result[key] = result[key]
+            else:
+                print(f"⚠️  Skipping empty segment {i+1}")
 
-        # Clean up combined text
-        combined_result["text"] = combined_result["text"].strip()
+        # Assemble text in proper temporal order
+        combined_result["text"] = " ".join(text_parts).strip()
+        
+        # Debug: Show first part of combined text
+        if combined_result["text"]:
+            first_part = combined_result["text"][:100]
+            print(f"🔍 Combined text starts with: '{first_part}...'")
+        else:
+            print("⚠️  Combined text is empty!")
 
-        # Sort segments by start time
+        # Ensure segments are sorted by start time (double-check)
         if combined_result["segments"]:
             combined_result["segments"].sort(key=lambda x: x.get("start", 0))
+            
+            # Verify segment order and report any issues
+            prev_end = 0
+            for i, seg in enumerate(combined_result["segments"]):
+                start_time = seg.get("start", 0)
+                if start_time < prev_end - 1:  # Allow 1 second tolerance for overlaps
+                    print(f"⚠️  Segment order issue detected at segment {i}: start={start_time:.1f}s, prev_end={prev_end:.1f}s")
+                prev_end = seg.get("end", start_time)
 
-        print(f"✅ Combined transcription from {len(segment_results)} segments")
+        print(f"✅ Combined transcription from {len(segment_results)} segments in temporal order")
+        print(f"📝 Total text length: {len(combined_result['text'])} characters")
+        print(f"🎯 Total segments: {len(combined_result.get('segments', []))}")
+        
+        # Debug: Show first few characters to verify beginning is preserved
+        if combined_result["text"]:
+            preview = combined_result["text"][:100]
+            print(f"🔍 Transcript begins: '{preview}...'")
+        
         return combined_result
 
 
@@ -841,7 +1001,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         _enhanced_processor_available = False
         create_enhanced_processor = None  # Define it to avoid unbound variable error
     from transcribe import (
-        get_media_duration, split_into_paragraphs, format_duration,
+        get_media_duration, split_into_paragraphs, format_duration, format_duration_minutes_only,
     )
 
     # Speaker identification imports
@@ -929,7 +1089,19 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             max_perf = False
     except Exception:
         max_perf = True
+    
+    # VAD CONTROL: Allow disabling VAD via environment variable
+    disable_vad = False
+    try:
+        env_disable_vad = os.environ.get("TRANSCRIBE_DISABLE_VAD", "").strip()
+        if env_disable_vad in ("1", "true", "True"):
+            disable_vad = True
+            print("🚫 VAD processing disabled via TRANSCRIBE_DISABLE_VAD environment variable")
+    except Exception:
+        disable_vad = False
+    
     config = get_maximum_hardware_config(max_perf=max_perf)
+    config['disable_vad'] = disable_vad
     # Report planning
     try:
         if config.get('max_perf'):
@@ -945,7 +1117,16 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     if not output_dir:
         output_dir = os.path.dirname(input_path)
 
-    duration = get_media_duration(input_path)
+    # Preprocess audio with silence padding to prevent missed words
+    try:
+        preprocessed_path = preprocess_audio_with_padding(input_path)
+    except Exception as _pre_e:
+        print(f"⚠️  Preprocessing step failed early: {_pre_e} - using original file")
+        preprocessed_path = input_path
+    preprocessing_used = preprocessed_path != input_path
+    working_input_path = preprocessed_path if preprocessing_used else input_path
+
+    duration = get_media_duration(working_input_path)
     if duration:
         print(f"⏱️  Duration: {format_duration(duration)}")
 
@@ -1140,12 +1321,17 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             if use_vad:
                 try:
                     # Get VAD segments for the audio file
-                    if _vad_functions_available:
-                        vad_segments = vad_segment_times(input_path)
+                    # VAD CONTROL: Allow disabling VAD when ordering issues occur
+                    if config.get('disable_vad', False):
+                        print("⚠️  VAD processing DISABLED - using full file transcription for guaranteed temporal order")
+                        print("   This ensures perfect segment ordering but may be slower for long files")
+                    elif _vad_functions_available:
+                        vad_segments = vad_segment_times(working_input_path)
                         if vad_segments and len(vad_segments) > 0:
                             print(f"🎯 VAD detected {len(vad_segments)} speech segments - processing in parallel")
+                            print("💡 If transcript beginnings are missing, set 'disable_vad': True in config")
                             # Use actual VAD segmentation with parallel processing
-                            result = transcribe_with_vad_parallel(input_path, vad_segments, model, transcribe_kwargs, config)
+                            result = transcribe_with_vad_parallel(working_input_path, vad_segments, model, transcribe_kwargs, config)
                             transcription_result = result
                             print("✅ VAD parallel transcription completed successfully")
                             transcription_complete = True
@@ -1159,7 +1345,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     use_vad = False  # Disable for this run
 
             # Call transcribe with optimized parameters
-            result = model.transcribe(input_path, **transcribe_kwargs)
+            result = model.transcribe(working_input_path, **transcribe_kwargs)
             transcription_result = result
             print("✅ Whisper transcription completed successfully")
         except Exception as e:
@@ -1244,13 +1430,16 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
 
             if use_vad:
                 try:
-                    # Get VAD segments for the audio file (CPU fallback)
-                    if _vad_functions_available:
-                        vad_segments = vad_segment_times(input_path)
+                    # VAD CONTROL: Allow disabling VAD when ordering issues occur (CPU fallback)  
+                    if config.get('disable_vad', False):
+                        print("⚠️  VAD processing DISABLED (CPU fallback) - using full file transcription for guaranteed temporal order")
+                    elif _vad_functions_available:
+                        vad_segments = vad_segment_times(working_input_path)
                         if vad_segments and len(vad_segments) > 0:
                             print(f"🎯 VAD detected {len(vad_segments)} speech segments (CPU fallback) - processing in parallel")
+                            print("💡 If transcript beginnings are missing, set 'disable_vad': True in config")
                             # Use actual VAD segmentation with parallel processing
-                            transcription_result = transcribe_with_vad_parallel(input_path, vad_segments, model, cpu_transcribe_kwargs, config)
+                            transcription_result = transcribe_with_vad_parallel(working_input_path, vad_segments, model, cpu_transcribe_kwargs, config)
                             transcription_error = None
                         else:
                             print("⚠️  VAD enabled but no segments detected (CPU fallback), proceeding without VAD")
@@ -1260,7 +1449,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     print(f"⚠️  VAD segmentation failed (CPU fallback): {vad_e} - proceeding without VAD")
                     use_vad = False  # Disable for this run
 
-            transcription_result = model.transcribe(input_path, **cpu_transcribe_kwargs)
+            transcription_result = model.transcribe(working_input_path, **cpu_transcribe_kwargs)
             transcription_error = None
         except Exception as cpu_e:
             raise Exception(f"Both GPU and CPU transcription timed out/failed: {cpu_e}")
@@ -1289,29 +1478,52 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
 
             cleaned_parts = []
             cleaned_segments = []
-            for seg in segments:
+            
+            # Sort segments by start time FIRST to ensure proper order
+            segments.sort(key=lambda x: x.get("start", 0))
+            print(f"🔍 Processing {len(segments)} segments in temporal order")
+            
+            for i, seg in enumerate(segments):
                 seg_text = str(seg.get("text", "")).strip()
                 avg_logprob = seg.get("avg_logprob", 0.0)
                 no_speech_prob = seg.get("no_speech_prob", 0.0)
+                start_time = seg.get("start", 0)
+                end_time = seg.get("end", 0)
 
                 suspicious = _is_suspicious_music_artifact(seg_text)
-                low_confidence = (isinstance(avg_logprob, (int, float)) and avg_logprob < -0.5) or \
-                                 (isinstance(no_speech_prob, (int, float)) and no_speech_prob > 0.6)
+                # Make artifact filtering MUCH more conservative - only remove if BOTH suspicious AND very low confidence
+                very_low_confidence = (isinstance(avg_logprob, (int, float)) and avg_logprob < -1.0) and \
+                                     (isinstance(no_speech_prob, (int, float)) and no_speech_prob > 0.8)
 
-                if seg_text and not (suspicious and low_confidence):
+                # CONSERVATIVE FILTERING: Only remove if clearly suspicious AND very low confidence
+                should_keep = seg_text and not (suspicious and very_low_confidence)
+
+                if should_keep:
                     cleaned_parts.append(seg_text)
                     cleaned_segments.append(seg)
                     kept_count += 1
+                    
+                    # Debug: Show first few segments to verify beginning preservation
+                    if i < 5:
+                        print(f"  ✅ Segment {i+1}: [{start_time:.1f}s-{end_time:.1f}s] '{seg_text[:50]}...' (logprob: {avg_logprob:.2f})")
                 else:
-                    if seg_text:
-                        removed_segments.append({
-                            "text": seg_text[:120],
-                            "avg_logprob": avg_logprob,
-                            "no_speech_prob": no_speech_prob,
-                            "start": seg.get("start"),
-                            "end": seg.get("end"),
-                        })
+                    removed_segments.append({
+                        "text": seg_text[:120],
+                        "avg_logprob": avg_logprob,
+                        "no_speech_prob": no_speech_prob,
+                        "start": start_time,
+                        "end": end_time,
+                    })
+                    print(f"  🧽 Filtered segment {i+1}: [{start_time:.1f}s-{end_time:.1f}s] '{seg_text[:30]}...' (suspicious={suspicious}, low_conf={very_low_confidence})")
+                    
             full_text = (" ".join(cleaned_parts)).strip()
+            
+            # Additional debugging
+            if cleaned_parts:
+                first_part = cleaned_parts[0][:100] if cleaned_parts[0] else "N/A"
+                print(f"🔍 First segment text: '{first_part}...'")
+                
+            print(f"📊 Segment filtering: kept {kept_count}/{len(segments)} segments")
 
             # Speaker identification removed as requested
         else:
@@ -1446,29 +1658,9 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     # Save DOCX with fallback
     try:
         doc = Document()
-        doc.add_heading(f'Transcription: {base_name}', 0)
-        # Badge: duration, speed, language, model only
+        doc.add_heading(f'{base_name}', 0)
         elapsed_total = time.time() - start_time
-        # Compute realtime speed factor if duration available
-        speed_factor = None
-        try:
-            if duration and duration > 0:
-                speed_factor = max(0.01, float(duration) / float(elapsed_total))
-        except Exception:
-            speed_factor = None
-        # Language from whisper result (ISO code)
-        detected_lang = None
-        if isinstance(transcription_result, dict):
-            detected_lang = transcription_result.get("language")
-        # Write compact metadata badge
-        if duration:
-            doc.add_paragraph(f'Duration: {format_duration(duration)}')
-        if speed_factor is not None:
-            doc.add_paragraph(f'Speed: {speed_factor:.2f}× realtime')
-        if detected_lang:
-            doc.add_paragraph(f'Language: {detected_lang}')
-        if selected_model_name:
-            doc.add_paragraph(f'Model: {selected_model_name}')
+        doc.add_paragraph(f'Transcription time: {format_duration_minutes_only(elapsed_total)}')
         doc.add_paragraph('')
         for para in formatted_text.split("\n\n"):
             if para.strip():
@@ -1508,6 +1700,15 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             print(f"📊 Memory after cleanup: RAM {mem.available / (1024**3):.1f}GB available")
     else:
         print(f"📊 Memory after cleanup: RAM {mem.available / (1024**3):.1f}GB available")
+
+    # Remove temporary preprocessed file if used
+    try:
+        if 'preprocessing_used' in locals() and preprocessing_used and working_input_path != input_path:
+            if os.path.exists(working_input_path):
+                os.remove(working_input_path)
+                print("🧹 Removed temporary preprocessed audio file")
+    except Exception as _cleanup_e:
+        print(f"⚠️  Failed to remove temporary file: {_cleanup_e}")
 
     return txt_path
 

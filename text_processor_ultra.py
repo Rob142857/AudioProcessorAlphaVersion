@@ -63,6 +63,13 @@ except ImportError:
     textstat = None
     _textstat_available = False
 
+try:
+    from custom_dictionary import CustomDictionary
+    _custom_dict_available = True
+except ImportError:
+    CustomDictionary = None
+    _custom_dict_available = False
+
 
 class UltraTextProcessor:
     """
@@ -98,6 +105,7 @@ class UltraTextProcessor:
         # Initialize models
         self.punctuation_model = None
         self.nlp = None
+        self.custom_dict = None
         self.quality_metrics = {}
 
         print(f"🧵 Ultra Text Processor: Using {self.max_workers} worker threads (of {cpu_count} available)")
@@ -143,13 +151,22 @@ class UltraTextProcessor:
                 print(f"⚠️  Failed to initialize NLTK: {e}")
                 self.use_nltk = False
 
-    def process_text_ultra(self, text: str, passes: int = 5) -> str:
+        # Initialize custom dictionary
+        if _custom_dict_available:
+            try:
+                self.custom_dict = CustomDictionary()
+                print("✅ Custom dictionary loaded")
+            except Exception as e:
+                print(f"⚠️  Failed to load custom dictionary: {e}")
+                self.custom_dict = None
+
+    def process_text_ultra(self, text: str, passes: int = 6) -> str:
         """
         Ultra-enhanced text processing with multiple specialized passes.
 
         Args:
             text: Raw text to process
-            passes: Number of processing passes (default: 5)
+            passes: Number of processing passes (default: 6)
 
         Returns:
             Ultra-processed text with optimal formatting
@@ -168,19 +185,28 @@ class UltraTextProcessor:
         if len(chunks) > 1 and self.use_parallel:
             print(f"📊 Processing {len(chunks)} text chunks in parallel...")
             
-            # Process chunks in parallel
+            # Process chunks in parallel WITH ORDER PRESERVATION
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = [executor.submit(self._process_chunk_multi_pass, chunk, passes) 
-                          for chunk in chunks]
+                # Submit all chunks with their index to maintain order
+                future_to_index = {
+                    executor.submit(self._process_chunk_multi_pass, chunk, passes): i
+                    for i, chunk in enumerate(chunks)
+                }
                 
-                for future in as_completed(futures):
+                # Collect results in a dictionary to maintain order
+                results_dict = {}
+                for future in as_completed(future_to_index):
+                    index = future_to_index[future]
                     try:
                         processed_chunk = future.result()
-                        processed_chunks.append(processed_chunk)
+                        results_dict[index] = processed_chunk
                     except Exception as e:
-                        print(f"⚠️  Chunk processing failed: {e}")
+                        print(f"⚠️  Chunk {index} processing failed: {e}")
                         # Use original chunk as fallback
-                        processed_chunks.append(chunks[len(processed_chunks)])
+                        results_dict[index] = chunks[index]
+                
+                # Reconstruct chunks in proper order
+                processed_chunks = [results_dict[i] for i in range(len(chunks))]
         else:
             # Process single chunk or sequential processing
             for chunk in chunks:
@@ -244,17 +270,20 @@ class UltraTextProcessor:
                     # Pass 1: Basic punctuation restoration
                     current_text = self._pass_1_basic_punctuation(current_text)
                 elif pass_num == 2:
-                    # Pass 2: Advanced sentence segmentation
-                    current_text = self._pass_2_sentence_segmentation(current_text)
+                    # Pass 2: Custom dictionary word substitutions
+                    current_text = self._pass_2_custom_dictionary(current_text)
                 elif pass_num == 3:
-                    # Pass 3: Capitalization and proper nouns
-                    current_text = self._pass_3_capitalization(current_text)
+                    # Pass 3: Advanced sentence segmentation
+                    current_text = self._pass_3_sentence_segmentation(current_text)
                 elif pass_num == 4:
-                    # Pass 4: Grammar and style improvements
-                    current_text = self._pass_4_grammar_style(current_text)
+                    # Pass 4: Capitalization and proper nouns
+                    current_text = self._pass_4_capitalization(current_text)
                 elif pass_num == 5:
-                    # Pass 5: Final cleanup and formatting
-                    current_text = self._pass_5_final_cleanup(current_text)
+                    # Pass 5: Grammar and style improvements
+                    current_text = self._pass_5_grammar_style(current_text)
+                elif pass_num == 6:
+                    # Pass 6: Final cleanup and formatting
+                    current_text = self._pass_6_final_cleanup(current_text)
                 
             except Exception as e:
                 print(f"⚠️  Pass {pass_num} failed: {e}")
@@ -279,7 +308,13 @@ class UltraTextProcessor:
         
         return text.strip()
 
-    def _pass_2_sentence_segmentation(self, text: str) -> str:
+    def _pass_2_custom_dictionary(self, text: str) -> str:
+        """Pass 2: Apply custom dictionary word substitutions."""
+        if self.custom_dict:
+            return self.custom_dict.apply_substitutions(text)
+        return text
+    
+    def _pass_3_sentence_segmentation(self, text: str) -> str:
         """Pass 2: Advanced sentence segmentation and boundary detection."""
         if self.use_spacy and self.nlp:
             try:
@@ -313,7 +348,7 @@ class UltraTextProcessor:
         
         return text
 
-    def _pass_3_capitalization(self, text: str) -> str:
+    def _pass_4_capitalization(self, text: str) -> str:
         """Pass 3: Advanced capitalization and proper noun handling."""
         
         # Advanced proper noun patterns
@@ -372,7 +407,7 @@ class UltraTextProcessor:
 
         return text
 
-    def _pass_4_grammar_style(self, text: str) -> str:
+    def _pass_5_grammar_style(self, text: str) -> str:
         """Pass 4: Grammar improvements and style enhancements."""
         
         # Common grammar fixes
@@ -411,7 +446,7 @@ class UltraTextProcessor:
 
         return text
 
-    def _pass_5_final_cleanup(self, text: str) -> str:
+    def _pass_6_final_cleanup(self, text: str) -> str:
         """Pass 5: Final cleanup and formatting polish."""
         
         # Final punctuation and spacing cleanup

@@ -45,6 +45,18 @@ def format_duration(seconds):
         return f"{minutes:02d}:{secs:05.2f}"
 
 
+def format_duration_minutes_only(seconds):
+    """Convert seconds to minutes and seconds format (MM:SS) for transcription time."""
+    if seconds is None:
+        return None
+    
+    seconds = round(seconds, 2)
+    total_minutes = int(seconds // 60)
+    remaining_seconds = seconds % 60
+    
+    return f"{total_minutes:02d}:{remaining_seconds:05.2f}"
+
+
 def split_into_paragraphs(text, max_length=500):
     """Richer paragraphing heuristics:
     - Treat blank lines as hard paragraph breaks.
