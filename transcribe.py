@@ -57,6 +57,24 @@ def format_duration_minutes_only(seconds):
     return f"{total_minutes:02d}:{remaining_seconds:05.2f}"
 
 
+def format_duration_hms(seconds: float | int | None) -> str | None:
+    """Convert seconds to HH:MM:SS (no fractional seconds).
+
+    - Hours can exceed 24 for long runs; we don't clamp.
+    - Returns None if seconds is None.
+    """
+    if seconds is None:
+        return None
+    try:
+        s = int(round(float(seconds)))
+    except Exception:
+        return None
+    hours = s // 3600
+    minutes = (s % 3600) // 60
+    secs = s % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
 def split_into_paragraphs(text, max_length=500):
     """Richer paragraphing heuristics:
     - Treat blank lines as hard paragraph breaks.

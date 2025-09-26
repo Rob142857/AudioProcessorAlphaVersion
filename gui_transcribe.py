@@ -270,8 +270,8 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         mainframe.columnconfigure(0, weight=1)
         mainframe.columnconfigure(1, weight=1)
         mainframe.columnconfigure(2, weight=1)
-        mainframe.rowconfigure(6, weight=1)
-        mainframe.rowconfigure(7, minsize=60)
+        mainframe.rowconfigure(8, weight=1)
+        mainframe.rowconfigure(9, minsize=60)
 
         # Title
         title_frame = ttk.Frame(mainframe, style='Clean.TFrame')
@@ -329,19 +329,25 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         max_perf_var = tk.IntVar(value=1)
         tk.Checkbutton(combined_frame, text="Maximise performance (use all cores, high priority, aggressive VRAM)", variable=max_perf_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=4, columnspan=4, sticky='w', padx=20, pady=(0, 8))
 
-        # Row 4: Compact description
+        # Row 4a: Batch options
+        recursive_var = tk.IntVar(value=0)
+        skip_existing_var = tk.IntVar(value=1)
+        tk.Checkbutton(combined_frame, text="Process subfolders (recursive)", variable=recursive_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=5, columnspan=2, sticky='w', padx=20, pady=(0, 8))
+        tk.Checkbutton(combined_frame, text="Skip files with existing outputs (.txt and .docx)", variable=skip_existing_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=2, row=5, columnspan=2, sticky='w', padx=20, pady=(0, 8))
+
+        # Row 5: Compact description
         desc = (
             "Whisper large-v3-turbo • Auto device (CUDA/DirectML/CPU) • Direct audio • RAM-optimized threads\n"
             "Outputs saved next to source file(s)."
         )
-        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=5, columnspan=4, sticky='w', padx=20, pady=(8, 16))
+        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=6, columnspan=4, sticky='w', padx=20, pady=(8, 16))
 
         # Handlers attached to the buttons above
 
         # Log
-        ttk.Label(mainframe, text="Activity Log", style='Section.TLabel').grid(column=0, row=5, columnspan=3, sticky="w", pady=(0, 15))
+        ttk.Label(mainframe, text="Activity Log", style='Section.TLabel').grid(column=0, row=7, columnspan=3, sticky="w", pady=(0, 15))
         log_frame = tk.Frame(mainframe, bg='white', relief='flat', borderwidth=1)
-        log_frame.grid(column=0, row=6, columnspan=3, sticky="nsew", pady=(0, 25))
+        log_frame.grid(column=0, row=8, columnspan=3, sticky="nsew", pady=(0, 25))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         log_text = tk.Text(log_frame, wrap=tk.WORD, height=25, font=('Segoe UI', 9), bg='white', fg='#2c3e50', borderwidth=0, highlightthickness=0, insertbackground='#2c3e50')
@@ -414,17 +420,52 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                         pass
 
                     if os.path.isdir(inp):
+                        def _is_supported(filename: str) -> bool:
+                            return os.path.splitext(filename)[1].lower() in SUPPORTED_EXTS
+
+                        def _has_outputs(path: str) -> bool:
+                            base = os.path.splitext(os.path.basename(path))[0]
+                            folder = os.path.dirname(path)
+                            txt_path = os.path.join(folder, base + ".txt")
+                            docx_path = os.path.join(folder, base + ".docx")
+                            # Skip only if BOTH outputs exist
+                            return os.path.exists(txt_path) and os.path.exists(docx_path)
+
                         files = []
+                        skipped = 0
                         try:
-                            for name in sorted(os.listdir(inp)):
-                                full = os.path.join(inp, name)
-                                if os.path.isfile(full) and os.path.splitext(name)[1].lower() in SUPPORTED_EXTS:
-                                    files.append(full)
+                            if recursive_var.get() == 1:
+                                for root, _dirs, names in os.walk(inp):
+                                    for name in sorted(names):
+                                        if not _is_supported(name):
+                                            continue
+                                        full = os.path.join(root, name)
+                                        if skip_existing_var.get() == 1 and _has_outputs(full):
+                                            rel = os.path.relpath(full, inp)
+                                            q.put(f"Skipping (outputs exist): {rel}\n")
+                                            skipped += 1
+                                            continue
+                                        files.append(full)
+                            else:
+                                for name in sorted(os.listdir(inp)):
+                                    full = os.path.join(inp, name)
+                                    if os.path.isfile(full) and _is_supported(name):
+                                        if skip_existing_var.get() == 1 and _has_outputs(full):
+                                            q.put(f"Skipping (outputs exist): {name}\n")
+                                            skipped += 1
+                                            continue
+                                        files.append(full)
                         except Exception as e:
                             q.put(f"Failed to list folder '{inp}': {e}\n")
+
                         if not files:
-                            q.put("No supported media files found in the selected folder.\n")
+                            if skipped > 0:
+                                q.put("All files skipped due to existing outputs.\n")
+                            else:
+                                q.put("No supported media files found in the selected folder.\n")
                         else:
+                            if skipped > 0:
+                                q.put(f"{skipped} file(s) skipped due to existing outputs.\n")
                             run_batch_transcription(files, outdir_override=None, output_queue=q, threads_override=thr)
                     else:
                         run_transcription(inp, outdir=None, output_queue=q, threads_override=thr)
@@ -440,7 +481,7 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
             threading.Thread(target=worker, daemon=True).start()
 
         run_btn = tk.Button(mainframe, text="Start Transcription", command=start_transcription_thread, font=('Segoe UI', 12, 'bold'), bg='#007acc', fg='white', relief='flat', borderwidth=0, padx=30, pady=12, activebackground='#0056b3', activeforeground='white', cursor='hand2')
-        run_btn.grid(column=1, row=7, pady=(10, 0))
+        run_btn.grid(column=1, row=9, pady=(10, 0))
         poll_queue()
         root.mainloop()
     except Exception as e:

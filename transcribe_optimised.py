@@ -259,7 +259,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     from docx import Document
     from deepmultilingualpunctuation import PunctuationModel
     from transcribe import (
-        get_media_duration, split_into_paragraphs, format_duration, format_duration_minutes_only,
+        get_media_duration, split_into_paragraphs, format_duration, format_duration_minutes_only, format_duration_hms,
     )
 
     start_time = time.time()
@@ -499,7 +499,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         doc.add_heading(f'{base_name}', 0)
 
         elapsed_total = time.time() - start_time
-        doc.add_paragraph(f'Transcription time: {format_duration_minutes_only(elapsed_total)}')
+        doc.add_paragraph(f'Transcription time: {format_duration_hms(elapsed_total)}')
         doc.add_paragraph('')
 
         for para in formatted_text.split("\n\n"):
@@ -1001,7 +1001,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         _enhanced_processor_available = False
         create_enhanced_processor = None  # Define it to avoid unbound variable error
     from transcribe import (
-        get_media_duration, split_into_paragraphs, format_duration, format_duration_minutes_only,
+        get_media_duration, split_into_paragraphs, format_duration, format_duration_minutes_only, format_duration_hms,
     )
 
     # Speaker identification imports
@@ -1660,7 +1660,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         doc = Document()
         doc.add_heading(f'{base_name}', 0)
         elapsed_total = time.time() - start_time
-        doc.add_paragraph(f'Transcription time: {format_duration_minutes_only(elapsed_total)}')
+        doc.add_paragraph(f'Transcription time: {format_duration_hms(elapsed_total)}')
         doc.add_paragraph('')
         for para in formatted_text.split("\n\n"):
             if para.strip():
