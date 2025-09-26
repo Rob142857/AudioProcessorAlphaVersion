@@ -764,9 +764,14 @@ def transcribe_with_vad_parallel(input_path, vad_segments, model, base_transcrib
                 print(f"⚠️  Failed to transcribe segment {os.path.basename(segment_path)}: {e}")
                 return None
 
-        # Transcribe all segments in parallel
-        max_workers = min(len(segment_files), config.get("cpu_threads", 4) // 2)
-        max_workers = max(1, max_workers)  # Ensure at least 1 worker
+        # Transcribe all segments in parallel with enhanced CPU utilization
+        if config.get('max_perf'):
+            # Ultra aggressive: use up to 75% of CPU cores for VAD parallel processing
+            max_workers = min(len(segment_files), max(1, int(config.get("cpu_threads", 4) * 0.75)))
+        else:
+            # Conservative: use up to 50% of CPU cores
+            max_workers = min(len(segment_files), config.get("cpu_threads", 4) // 2)
+        max_workers = max(1, min(max_workers, 12))  # Cap at 12 workers for stability
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(transcribe_segment, seg_path, time_range)
@@ -1061,20 +1066,40 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     if isinstance(threads_override, int) and threads_override > 0:
         config["cpu_threads"] = max(1, min(64, threads_override))
 
-    # Set CPU threads (& interop)
+    # Set CPU threads (& interop) with enhanced threading for text processing
     torch_api.set_num_threads(config["cpu_threads"])
+    
+    # Calculate interop threads with enhanced settings
+    if config.get('max_perf'):
+        interop = max(4, min(24, config["cpu_threads"] // 2))  # More aggressive interop
+    else:
+        interop = max(2, min(16, config["cpu_threads"] // 4))
+    
     try:
-        interop = max(2, min(16, (config["cpu_threads"] // 2) if config.get('max_perf') else (config["cpu_threads"] // 4)))
         torch_api.set_num_interop_threads(interop)
     except Exception:
         pass
-    # Also hint MKL/OMP to use similar thread counts
+    
+    # Enhanced MKL/OMP configuration for better CPU utilization
     try:
         os.environ.setdefault("MKL_NUM_THREADS", str(config["cpu_threads"]))
         os.environ.setdefault("OMP_NUM_THREADS", str(config["cpu_threads"]))
+        # Additional performance tunings
+        os.environ.setdefault("MKL_DYNAMIC", "TRUE")  # Dynamic thread adjustment
+        os.environ.setdefault("OMP_DYNAMIC", "TRUE")  # Dynamic thread adjustment
+        os.environ.setdefault("NUMEXPR_MAX_THREADS", str(min(config["cpu_threads"], 16)))  # NumPy/SciPy threading
+        
+        # Text processing specific threading
+        text_threads = max(2, min(8, config["cpu_threads"] // 2))
+        os.environ.setdefault("NLTK_NUM_THREADS", str(text_threads))
+        os.environ.setdefault("SPACY_NUM_THREADS", str(text_threads))
+        
     except Exception:
         pass
-    print(f"🧵 PyTorch threads set to: {config['cpu_threads']} (interop≈{max(2, min(8, config['cpu_threads'] // 4))})")
+    
+    text_workers = max(2, min(8, config["cpu_threads"] // 2))
+    print(f"🧵 Enhanced threading: PyTorch {config['cpu_threads']} threads, interop {interop}, text processing up to {text_workers} workers")
+    print(f"🔧 CPU optimization: MKL/OMP dynamic threading enabled for maximum utilization")
 
     # Note: batch size is not passed to Whisper to ensure broad compatibility across versions
 
@@ -1309,38 +1334,100 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
 
     print(f"⚡ Hardware utilised: {device_name}")
 
-    # Post-processing with enhanced text processing
+    # Post-processing with ULTRA-enhanced text processing (multi-pass with parallel processing)
     try:
-        if _enhanced_processor_available and create_enhanced_processor is not None:
-            # Use enhanced processor with spaCy and custom rules
-            processor = create_enhanced_processor(use_spacy=True, use_transformers=False)
+        # Try to use the new ultra text processor first
+        try:
+            from text_processor_ultra import create_ultra_processor, create_advanced_paragraph_formatter
+            
+            # Calculate optimal workers for text processing (use remaining CPU capacity)
+            text_workers = max(2, min(8, config.get("cpu_threads", 4) // 2))
+            
+            print(f"🚀 Using ULTRA text processor with {text_workers} workers and 6 specialized passes")
             t0 = time.time()
-            full_text = processor.restore_punctuation(full_text)
+            
+            # Ultra processing with 6 passes for maximum quality
+            ultra_processor = create_ultra_processor(max_workers=text_workers)
+            full_text = ultra_processor.process_text_ultra(full_text, passes=6)
+            
             t1 = time.time()
-            print(f"✅ Enhanced punctuation restoration completed ({t1 - t0:.1f}s)")
-        else:
-            # Fallback to basic punctuation model
-            from deepmultilingualpunctuation import PunctuationModel
-            pm = PunctuationModel()
-            t0 = time.time()
-            full_text = pm.restore_punctuation(full_text)
-            t1 = time.time()
-            # Second pass for improved sentence boundaries
-            full_text = pm.restore_punctuation(full_text)
+            print(f"✅ Ultra text processing completed ({t1 - t0:.1f}s)")
+            
+            # Advanced paragraph formatting
+            paragraph_formatter = create_advanced_paragraph_formatter(max_workers=text_workers)
+            formatted_text = paragraph_formatter.format_paragraphs_advanced(full_text, target_length=600)
+            
             t2 = time.time()
-            print(f"✅ Basic punctuation restoration completed (passes: 2 | {t1 - t0:.1f}s + {t2 - t1:.1f}s)")
+            print(f"✅ Advanced paragraph formatting completed ({t2 - t1:.1f}s)")
+            
+        except ImportError:
+            print("⚠️  Ultra processor not available, falling back to enhanced processor")
+            # Fallback to enhanced processor
+            if _enhanced_processor_available and create_enhanced_processor is not None:
+                # Use enhanced processor with spaCy and custom rules
+                processor = create_enhanced_processor(use_spacy=True, use_transformers=False)
+                t0 = time.time()
+                
+                # Multiple passes for better quality
+                full_text = processor.restore_punctuation(full_text)
+                # Second pass for additional refinement
+                full_text = processor.restore_punctuation(full_text)
+                # Third pass for edge cases
+                full_text = processor.restore_punctuation(full_text)
+                
+                t1 = time.time()
+                print(f"✅ Enhanced punctuation restoration completed (3 passes | {t1 - t0:.1f}s)")
+                
+                # Enhanced paragraph formatting
+                formatted = split_into_paragraphs(full_text, max_length=600)
+                if isinstance(formatted, list):
+                    formatted_text = "\n\n".join(formatted)
+                else:
+                    formatted_text = full_text
+            else:
+                # Basic fallback with multiple passes
+                from deepmultilingualpunctuation import PunctuationModel
+                pm = PunctuationModel()
+                t0 = time.time()
+                
+                # 4 passes for better quality
+                full_text = pm.restore_punctuation(full_text)
+                full_text = pm.restore_punctuation(full_text)
+                full_text = pm.restore_punctuation(full_text)
+                full_text = pm.restore_punctuation(full_text)
+                
+                t1 = time.time()
+                print(f"✅ Basic punctuation restoration completed (4 passes | {t1 - t0:.1f}s)")
+                
+                # Enhanced paragraph formatting
+                formatted = split_into_paragraphs(full_text, max_length=600)
+                if isinstance(formatted, list):
+                    formatted_text = "\n\n".join(formatted)
+                else:
+                    formatted_text = full_text
+                    
     except Exception as e:
-        print(f"⚠️  Punctuation restoration failed: {e}")
+        print(f"⚠️  Text processing failed: {e}")
+        # Last fallback
+        formatted_text = full_text
 
+    # Final quality check and validation
     try:
-        formatted = split_into_paragraphs(full_text, max_length=500)
-        if isinstance(formatted, list):
-            formatted_text = "\n\n".join(formatted)
+        if formatted_text and len(formatted_text) > 10:
+            # Ensure proper sentence structure
+            if not formatted_text.endswith(('.', '!', '?')):
+                formatted_text += '.'
+            
+            # Capitalize first letter if needed
+            if formatted_text and not formatted_text[0].isupper():
+                formatted_text = formatted_text[0].upper() + formatted_text[1:]
+                
+            print("✅ Final text validation completed")
         else:
+            print("⚠️  Formatted text too short, using original")
             formatted_text = full_text
-        print("✅ Text formatting completed")
     except Exception as e:
-        print(f"⚠️  Text formatting failed: {e}")
+        print(f"⚠️  Text validation failed: {e}")
         formatted_text = full_text
 
     base_name = os.path.splitext(os.path.basename(input_path))[0]
