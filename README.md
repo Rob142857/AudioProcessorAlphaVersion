@@ -49,8 +49,15 @@ Ultra-high-performance audio and video transcription system for Windows x64 mach
 
 ### Installation
 ```powershell
-# Run this single command as Administrator
-powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install.ps1 | iex"
+# Run this single command (auto-detects GPU/CPU and installs accordingly)
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install_new.ps1 | iex"
+```
+
+Optional (run with parameters like forcing CPU/CUDA):
+```powershell
+# Download locally, then run with flags
+iwr https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install_new.ps1 -OutFile install_new.ps1
+powershell -ExecutionPolicy Bypass -File .\install_new.ps1 -Device cpu   # or -Device cuda
 ```
 
 This automatically:
