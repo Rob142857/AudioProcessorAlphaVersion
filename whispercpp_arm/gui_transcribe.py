@@ -12,10 +12,17 @@ try:
 except Exception:
     DOCX_AVAILABLE = False
 
-# Note: punctuation and ONNX runtime disabled for now to reduce startup noise on ARM
-# import onnxruntime as ort
-# import numpy as np
-# from deepmultilingualpunctuation import PunctuationModel
+# Optional punctuation (ONNX Runtime). If unavailable, we skip gracefully.
+HAVE_ONNX_PUNCT: bool = False
+# Placeholders for optional imports to satisfy static analysis when unavailable
+ort = None  # type: ignore
+np = None  # type: ignore
+try:
+    import onnxruntime as ort  # type: ignore
+    import numpy as np  # type: ignore
+    HAVE_ONNX_PUNCT = True
+except Exception:
+    HAVE_ONNX_PUNCT = False
 
 
 # Use the in-place built binary which has its required DLLs alongside
@@ -23,6 +30,28 @@ BASE_DIR = Path(__file__).parent.resolve()
 WHISPER_CPP_PATH = str(BASE_DIR / "whisper.cpp" / "build" / "bin" / "whisper-cli.exe")
 MODEL_PATH = str(BASE_DIR / "models" / "ggml-large-v3-turbo.bin")  # Absolute model path
 PUNCTUATION_MODEL_PATH = "./models/punctuation.onnx"  # Path to ONNX punctuation model
+
+# Lazy-loaded ONNX session
+_PUNCT_SESSION = None
+
+def _ensure_punct_session(log_callback=None):
+    global _PUNCT_SESSION
+    if _PUNCT_SESSION is not None:
+        return _PUNCT_SESSION
+    if not HAVE_ONNX_PUNCT:
+        return None
+    try:
+        if not Path(PUNCTUATION_MODEL_PATH).exists():
+            if log_callback:
+                log_callback(f"Punctuation model not found at {PUNCTUATION_MODEL_PATH}; skipping punctuation.")
+            return None
+        # mypy/pylance: ort guarded by HAVE_ONNX_PUNCT above
+        _PUNCT_SESSION = ort.InferenceSession(PUNCTUATION_MODEL_PATH, providers=['CPUExecutionProvider'])  # type: ignore
+        return _PUNCT_SESSION
+    except Exception as e:
+        if log_callback:
+            log_callback(f"Failed to initialize ONNX punctuation: {e}")
+        return None
 
 # Helper functions
 def run_whisper_cpp(audio_file, log_callback=None):
@@ -88,9 +117,31 @@ def run_whisper_cpp(audio_file, log_callback=None):
 def run_whisper_python(audio_file):
     raise RuntimeError("Python Whisper fallback disabled on ARM due to missing deps. Use whisper.cpp.")
 
-def restore_punctuation(text_file):
-    # For now, skip punctuation restoration as model is not available
-    return text_file
+def restore_punctuation(text_file, log_callback=None):
+    # If ONNX is not available or model missing, just return the same file
+    sess = _ensure_punct_session(log_callback=log_callback)
+    if sess is None:
+        if log_callback:
+            log_callback("Punctuation unavailable; returning unmodified transcript.")
+        return text_file
+
+    try:
+        # Simple line-by-line inference placeholder. Real implementation depends on the ONNX model IO.
+        tmp_out = Path(text_file).with_suffix('.punct.txt')
+        with open(text_file, 'r', encoding='utf-8', errors='ignore') as fin, open(tmp_out, 'w', encoding='utf-8') as fout:
+            for line in fin:
+                src = line.strip()
+                if not src:
+                    fout.write('\n')
+                    continue
+                # NOTE: Replace this with actual pre/post-processing for your model
+                # Here we just write the line back to keep behavior stable
+                fout.write(src + '\n')
+        return str(tmp_out)
+    except Exception as e:
+        if log_callback:
+            log_callback(f"Punctuation failed: {e}")
+        return text_file
 
 def transcribe_files(files, log_callback):
     os.makedirs("output", exist_ok=True)
@@ -98,8 +149,8 @@ def transcribe_files(files, log_callback):
         try:
             log_callback(f"Transcribing: {audio_file}")
             txt_file = Path(run_whisper_cpp(audio_file, log_callback=log_callback))
-            log_callback(f"Restoring punctuation...")
-            punct_file = restore_punctuation(str(txt_file))
+            log_callback("Restoring punctuation (optional)...")
+            punct_file = restore_punctuation(str(txt_file), log_callback=log_callback)
 
             # Create a Word document next to the source file with plain <basename>.docx
             try:
