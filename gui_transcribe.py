@@ -13,6 +13,7 @@ import threading
 import queue
 import sys
 import subprocess
+import json
 from typing import Optional, List
 
 # GUI toolkit
@@ -28,6 +29,31 @@ SUPPORTED_EXTS = (
 
 # Default Downloads folder retained for compatibility with CLI --outdir override
 DEFAULT_DOWNLOADS = os.path.normpath(os.path.join(os.path.expanduser("~"), "Downloads"))
+
+# Repo root (folder containing this script)
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+SETTINGS_PATH = os.path.join(REPO_ROOT, ".transcribe_settings.json")
+
+def _load_settings() -> dict:
+    try:
+        with open(SETTINGS_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_settings(data: dict) -> None:
+    try:
+        with open(SETTINGS_PATH, 'w', encoding='utf-8') as f:
+            json.dump(data or {}, f, indent=2)
+    except Exception:
+        pass
+
+def _repo_default_terms_file() -> Optional[str]:
+    for name in ("awkward_words.txt", "awkward_words.md"):
+        p = os.path.join(REPO_ROOT, name)
+        if os.path.exists(p):
+            return p
+    return None
 
 def run_transcription(input_file: str, outdir: Optional[str], output_queue: queue.Queue, *, threads_override: Optional[int] = None):
     """Run transcription for a single file with large model and auto device detection.
@@ -319,28 +345,83 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         # Thin separator
         ttk.Separator(combined_frame, orient='horizontal').grid(column=0, row=2, columnspan=4, sticky='ew', padx=20, pady=(4, 10))
 
-    # Row 3: Threads override
+        # Row 3: Threads override
         tk.Label(combined_frame, text="CPU Threads (optional):", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=0, row=3, sticky='w', padx=20, pady=(4, 6))
         threads_var = tk.StringVar(value=str(default_threads) if default_threads and default_threads > 0 else "")
         tk.Entry(combined_frame, textvariable=threads_var, width=10, bg='#f9fafb', fg='#111827', relief='flat').grid(column=1, row=3, sticky='w', padx=(12, 6), pady=(4, 6))
         tk.Label(combined_frame, text="Leave blank for Auto. Or set TRANSCRIBE_THREADS.", bg='white', fg='#6b7280', font=('Segoe UI', 8)).grid(column=2, row=3, columnspan=2, sticky='w', padx=(6, 20), pady=(4, 6))
 
-        # Row 3b: Max performance mode
-        max_perf_var = tk.IntVar(value=1)
-        tk.Checkbutton(combined_frame, text="Maximise performance (use all cores, high priority, aggressive VRAM)", variable=max_perf_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=4, columnspan=4, sticky='w', padx=20, pady=(0, 8))
+        # Row 4: Domain terms file (awkward words)
+        tk.Label(combined_frame, text="Domain terms file (optional):", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=0, row=4, sticky='w', padx=20, pady=(0, 6))
+        # Determine default domain file: from settings or repo-root fallback
+        _settings = _load_settings()
+        _saved_domain = _settings.get("domain_terms_file")
+        _default_domain = _saved_domain if (_saved_domain and os.path.exists(_saved_domain)) else (_repo_default_terms_file() or "")
+        domain_var = tk.StringVar(value=_default_domain)
+        tk.Entry(combined_frame, textvariable=domain_var, bg='#f9fafb', fg='#111827', relief='flat').grid(column=1, row=4, sticky='ew', padx=(12, 6), pady=(0, 6))
 
-        # Row 4a: Batch options
+        # Controls (Browse, Clear, Open sample) grouped together
+        controls_frame = tk.Frame(combined_frame, bg='white')
+        controls_frame.grid(column=2, row=4, columnspan=2, sticky='w', padx=(6, 20), pady=(0, 6))
+
+        def browse_domain_file():
+            p = filedialog.askopenfilename(title="Select domain terms file (one term per line)", filetypes=[("Text/Markdown", "*.txt *.md"), ("All Files", "*.*")])
+            if p:
+                domain_var.set(p)
+                # Persist selection
+                s = _load_settings(); s["domain_terms_file"] = p; _save_settings(s)
+        tk.Button(controls_frame, text="Browse", command=browse_domain_file, font=('Segoe UI', 9, 'bold'), bg='#10b981', fg='white', relief='flat', borderwidth=0, padx=12, pady=4, activebackground='#059669', activeforeground='white').pack(side='left', padx=(0, 6))
+
+        def clear_domain_file():
+            domain_var.set("")
+            # Persist clear
+            s = _load_settings(); s["domain_terms_file"] = ""; _save_settings(s)
+        tk.Button(controls_frame, text="Clear", command=clear_domain_file, font=('Segoe UI', 9), bg='#e5e7eb', fg='#111827', relief='flat', borderwidth=0, padx=12, pady=4, activebackground='#d1d5db', activeforeground='#111827').pack(side='left', padx=(0, 6))
+
+        def open_sample_terms():
+            try:
+                sample = _repo_default_terms_file()
+                if not sample:
+                    # Create default sample if missing
+                    sample = os.path.join(REPO_ROOT, 'awkward_words.txt')
+                    content = (
+                        "# Example domain terms (one per line). Lines starting with # are comments.\n"
+                        "# You can also use a Markdown list like:\n"
+                        "# - Schrödinger\n# - Noether\n# - Fourier transform\n\n"
+                        "Schrödinger\nNoether\nFourier transform\n"
+                    )
+                    with open(sample, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                # Launch in Notepad
+                try:
+                    subprocess.Popen(["notepad.exe", sample])
+                except Exception:
+                    # Fallback to OS default
+                    os.startfile(sample)
+            except Exception as e:
+                messagebox.showerror("Open sample terms", f"Failed to open sample terms file: {e}")
+        tk.Button(controls_frame, text="Open sample", command=open_sample_terms, font=('Segoe UI', 9), bg='#f3f4f6', fg='#111827', relief='flat', borderwidth=0, padx=12, pady=4, activebackground='#e5e7eb', activeforeground='#111827').pack(side='left')
+
+        # Row 3b: Max performance mode (shifted to row 5)
+        max_perf_var = tk.IntVar(value=1)
+        tk.Checkbutton(combined_frame, text="Maximise performance (use all cores, high priority, aggressive VRAM)", variable=max_perf_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=5, columnspan=4, sticky='w', padx=20, pady=(0, 8))
+
+        # Row 4a: Batch options (shifted to row 6)
         recursive_var = tk.IntVar(value=0)
         skip_existing_var = tk.IntVar(value=1)
-        tk.Checkbutton(combined_frame, text="Process subfolders (recursive)", variable=recursive_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=5, columnspan=2, sticky='w', padx=20, pady=(0, 8))
-        tk.Checkbutton(combined_frame, text="Skip files with existing outputs (.txt and .docx)", variable=skip_existing_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=2, row=5, columnspan=2, sticky='w', padx=20, pady=(0, 8))
+        tk.Checkbutton(combined_frame, text="Process subfolders (recursive)", variable=recursive_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=6, columnspan=2, sticky='w', padx=20, pady=(0, 8))
+        tk.Checkbutton(combined_frame, text="Skip files with existing outputs (.txt and .docx)", variable=skip_existing_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=2, row=6, columnspan=2, sticky='w', padx=20, pady=(0, 8))
+
+        # Row 6b: Output options (time header)
+        time_header_var = tk.IntVar(value=1)
+        tk.Checkbutton(combined_frame, text="Show 'Transcription time' in DOCX header", variable=time_header_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=7, columnspan=4, sticky='w', padx=20, pady=(0, 8))
 
         # Row 5: Compact description
         desc = (
             "Whisper large-v3-turbo • Auto device (CUDA/DirectML/CPU) • Direct audio • RAM-optimized threads\n"
             "Outputs saved next to source file(s)."
         )
-        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=6, columnspan=4, sticky='w', padx=20, pady=(8, 16))
+        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=8, columnspan=4, sticky='w', padx=20, pady=(8, 16))
 
         # Handlers attached to the buttons above
 
@@ -419,6 +500,29 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                     except Exception:
                         pass
 
+                    # Apply domain terms file (if provided)
+                    try:
+                        dom_path = domain_var.get().strip()
+                        if dom_path:
+                            os.environ["TRANSCRIBE_AWKWARD_FILE"] = dom_path
+                            q.put(f"Using domain terms file: {os.path.basename(dom_path)}\n")
+                        else:
+                            os.environ.pop("TRANSCRIBE_AWKWARD_FILE", None)
+                        # Persist current selection
+                        s = _load_settings(); s["domain_terms_file"] = dom_path; _save_settings(s)
+                        
+                    except Exception as e:
+                        q.put(f"Warning: could not apply domain terms file: {e}\n")
+
+                    # Apply time header preference
+                    try:
+                        if time_header_var.get() == 1:
+                            os.environ.pop("TRANSCRIBE_HIDE_TIME", None)
+                        else:
+                            os.environ["TRANSCRIBE_HIDE_TIME"] = "1"
+                    except Exception:
+                        pass
+
                     if os.path.isdir(inp):
                         def _is_supported(filename: str) -> bool:
                             return os.path.splitext(filename)[1].lower() in SUPPORTED_EXTS
@@ -435,11 +539,11 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                         skipped = 0
                         try:
                             if recursive_var.get() == 1:
-                                for root, _dirs, names in os.walk(inp):
+                                for dirpath, _dirs, names in os.walk(inp):
                                     for name in sorted(names):
                                         if not _is_supported(name):
                                             continue
-                                        full = os.path.join(root, name)
+                                        full = os.path.join(dirpath, name)
                                         if skip_existing_var.get() == 1 and _has_outputs(full):
                                             rel = os.path.relpath(full, inp)
                                             q.put(f"Skipping (outputs exist): {rel}\n")
@@ -501,6 +605,7 @@ def main():
     parser.add_argument("--outdir", help="optional output folder override; defaults to saving next to source file(s)")
     parser.add_argument("--gui", action="store_true", help="launch GUI mode")
     parser.add_argument("--threads", type=int, help="Override CPU threads for PyTorch/OMP/MKL")
+    parser.add_argument("--awkward-file", dest="awkward_file", help="Path to domain terms file (one term per line). If omitted, defaults to repo-root awkward_words.* when present.")
     args = parser.parse_args()
 
     outdir = args.outdir or None  # default to same-as-source when not specified
@@ -515,6 +620,17 @@ def main():
         q = queue.Queue()
 
         def runner():
+            # Apply domain terms file for headless mode
+            try:
+                dom = args.awkward_file.strip() if args.awkward_file else None
+                if not dom:
+                    dom = _repo_default_terms_file()
+                if dom and os.path.exists(dom):
+                    os.environ["TRANSCRIBE_AWKWARD_FILE"] = dom
+                    q.put(f"Using domain terms file: {os.path.basename(dom)}\n")
+            except Exception as e:
+                q.put(f"Warning: could not apply domain terms file: {e}\n")
+
             p = args.input
             if os.path.isdir(p):
                 # Batch over folder (non-recursive)

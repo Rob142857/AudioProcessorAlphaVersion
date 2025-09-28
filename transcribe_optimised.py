@@ -241,6 +241,91 @@ def create_efficient_dataloader(audio_path: str, batch_size: int = 4, num_worker
     return dataloader
 
 
+# --- Awkward words support (prompt biasing) ---------------------------------
+def _read_lines(path: str) -> list:
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return [ln.strip() for ln in f.readlines()]
+    except Exception:
+        return []
+
+
+def load_awkward_terms(input_path: str) -> list:
+    """Load user-provided domain terms from common locations or env.
+
+    Priority:
+      1) TRANSCRIBE_AWKWARD_TERMS env (comma-separated)
+      2) TRANSCRIBE_AWKWARD_FILE env (path to .txt/.md)
+      3) awkward_words.txt / awkward_words.md in the input file's folder
+      4) awkward_words.txt / awkward_words.md in the repo root (this module's dir)
+    """
+    terms = []
+    try:
+        # 1) Inline env list
+        env_list = os.environ.get('TRANSCRIBE_AWKWARD_TERMS', '')
+        if env_list.strip():
+            for t in env_list.split(','):
+                t = t.strip()
+                if t:
+                    terms.append(t)
+
+        # 2) Env file
+        env_file = os.environ.get('TRANSCRIBE_AWKWARD_FILE', '').strip()
+        if env_file and os.path.isfile(env_file):
+            terms.extend(_read_lines(env_file))
+
+        # 3) Local folder files
+        in_dir = os.path.dirname(input_path)
+        for fname in ('awkward_words.txt', 'awkward_words.md'):
+            p = os.path.join(in_dir, fname)
+            if os.path.isfile(p):
+                terms.extend(_read_lines(p))
+                break
+
+        # 4) Repo root
+        repo_dir = os.path.dirname(__file__)
+        for fname in ('awkward_words.txt', 'awkward_words.md'):
+            p = os.path.join(repo_dir, fname)
+            if os.path.isfile(p):
+                terms.extend(_read_lines(p))
+                break
+    except Exception:
+        pass
+
+    # Normalize simple bullet formats and filter empties/comments
+    cleaned = []
+    for ln in terms:
+        if not ln:
+            continue
+        s = ln.lstrip('-•*\t >').strip()
+        if not s or s.startswith('#'):
+            continue
+        if s not in cleaned:
+            cleaned.append(s)
+
+    # Cap length to keep prompt small
+    return cleaned[:100]
+
+
+def build_initial_prompt(terms: list, max_chars: int = 800) -> Optional[str]:
+    """Build a concise initial_prompt string to bias Whisper.
+
+    Keeps capitalization as provided; trims to max_chars.
+    """
+    if not terms:
+        return None
+    try:
+        # Join terms with semicolons for clarity
+        payload = '; '.join(terms)
+        base = "Use these domain-specific terms exactly as written when recognized. Maintain capitalization: "
+        prompt = (base + payload).strip()
+        if len(prompt) > max_chars:
+            prompt = prompt[: max_chars - 3].rstrip() + '...'
+        return prompt
+    except Exception:
+        return None
+
+
 def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threads_override: Optional[int] = None):
     """
     Transcribe audio using dataset-based GPU pipeline optimization.
@@ -370,6 +455,10 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
 
     print(f"🧵 PyTorch threads set to: {config['cpu_threads']}")
 
+    # Build optional initial_prompt from awkward terms
+    awkward_terms = load_awkward_terms(input_path)
+    initial_prompt = build_initial_prompt(awkward_terms)
+
     # Create dataset and dataloader for efficient processing
     try:
         batch_size = 4 if chosen_device == "cuda" else 1
@@ -408,8 +497,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                 end_time_seg = segment_data['end_time']
 
                 # Transcribe this segment
-                result = model.transcribe(
-                    segment_audio,
+                seg_kwargs = dict(
                     language="en",  # Optimized for English language
                     compression_ratio_threshold=2.4,
                     logprob_threshold=-2.0,
@@ -419,6 +507,9 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                     verbose=False,  # Reduce verbosity for batch processing
                     suppress_tokens="-1",  # Disable token suppression for guardrail removal
                 )
+                if initial_prompt:
+                    seg_kwargs["initial_prompt"] = initial_prompt
+                result = model.transcribe(segment_audio, **seg_kwargs)
 
                 if isinstance(result, dict) and "segments" in result:
                     for seg in result["segments"]:
@@ -499,8 +590,9 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         doc.add_heading(f'{base_name}', 0)
 
         elapsed_total = time.time() - start_time
-        doc.add_paragraph(f'Transcription time: {format_duration_hms(elapsed_total)}')
-        doc.add_paragraph('')
+        if os.environ.get("TRANSCRIBE_HIDE_TIME", "").lower() not in ("1", "true", "yes"):
+            doc.add_paragraph(f'Transcription time: {format_duration_hms(elapsed_total)}')
+            doc.add_paragraph('')
 
         for para in formatted_text.split("\n\n"):
             if para.strip():
@@ -953,10 +1045,10 @@ def transcribe_with_vad_parallel(input_path, vad_segments, model, base_transcrib
             # Verify segment order and report any issues
             prev_end = 0
             for i, seg in enumerate(combined_result["segments"]):
-                start_time = seg.get("start", 0)
-                if start_time < prev_end - 1:  # Allow 1 second tolerance for overlaps
-                    print(f"⚠️  Segment order issue detected at segment {i}: start={start_time:.1f}s, prev_end={prev_end:.1f}s")
-                prev_end = seg.get("end", start_time)
+                seg_start = seg.get("start", 0)
+                if seg_start < prev_end - 1:  # Allow 1 second tolerance for overlaps
+                    print(f"⚠️  Segment order issue detected at segment {i}: start={seg_start:.1f}s, prev_end={prev_end:.1f}s")
+                prev_end = seg.get("end", seg_start)
 
         print(f"✅ Combined transcription from {len(segment_results)} segments in temporal order")
         print(f"📝 Total text length: {len(combined_result['text'])} characters")
@@ -1129,6 +1221,13 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     duration = get_media_duration(working_input_path)
     if duration:
         print(f"⏱️  Duration: {format_duration(duration)}")
+
+    # Build optional initial prompt from awkward words
+    awkward_terms = load_awkward_terms(input_path)
+    initial_prompt = build_initial_prompt(awkward_terms)
+    if initial_prompt:
+        preview = initial_prompt[:100]
+        print(f"🧩 Using domain terms bias (initial_prompt): '{preview}...'")
 
     # Pre-run cleanup
     force_gpu_memory_cleanup()
@@ -1317,6 +1416,8 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 "verbose": True,
                 "suppress_tokens": "-1",  # Disable token suppression for guardrail removal
             }
+            if initial_prompt:
+                transcribe_kwargs["initial_prompt"] = initial_prompt
 
             if use_vad:
                 try:
@@ -1427,6 +1528,8 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 "temperature": 0.0,
                 "verbose": True,
             }
+            if initial_prompt:
+                cpu_transcribe_kwargs["initial_prompt"] = initial_prompt
 
             if use_vad:
                 try:
@@ -1487,8 +1590,8 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 seg_text = str(seg.get("text", "")).strip()
                 avg_logprob = seg.get("avg_logprob", 0.0)
                 no_speech_prob = seg.get("no_speech_prob", 0.0)
-                start_time = seg.get("start", 0)
-                end_time = seg.get("end", 0)
+                seg_start = seg.get("start", 0)
+                seg_end = seg.get("end", 0)
 
                 suspicious = _is_suspicious_music_artifact(seg_text)
                 # Make artifact filtering MUCH more conservative - only remove if BOTH suspicious AND very low confidence
@@ -1505,16 +1608,16 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     
                     # Debug: Show first few segments to verify beginning preservation
                     if i < 5:
-                        print(f"  ✅ Segment {i+1}: [{start_time:.1f}s-{end_time:.1f}s] '{seg_text[:50]}...' (logprob: {avg_logprob:.2f})")
+                        print(f"  ✅ Segment {i+1}: [{seg_start:.1f}s-{seg_end:.1f}s] '{seg_text[:50]}...' (logprob: {avg_logprob:.2f})")
                 else:
                     removed_segments.append({
                         "text": seg_text[:120],
                         "avg_logprob": avg_logprob,
                         "no_speech_prob": no_speech_prob,
-                        "start": start_time,
-                        "end": end_time,
+                        "start": seg_start,
+                        "end": seg_end,
                     })
-                    print(f"  🧽 Filtered segment {i+1}: [{start_time:.1f}s-{end_time:.1f}s] '{seg_text[:30]}...' (suspicious={suspicious}, low_conf={very_low_confidence})")
+                    print(f"  🧽 Filtered segment {i+1}: [{seg_start:.1f}s-{seg_end:.1f}s] '{seg_text[:30]}...' (suspicious={suspicious}, low_conf={very_low_confidence})")
                     
             full_text = (" ".join(cleaned_parts)).strip()
             
@@ -1660,8 +1763,9 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         doc = Document()
         doc.add_heading(f'{base_name}', 0)
         elapsed_total = time.time() - start_time
-        doc.add_paragraph(f'Transcription time: {format_duration_hms(elapsed_total)}')
-        doc.add_paragraph('')
+        if os.environ.get("TRANSCRIBE_HIDE_TIME", "").lower() not in ("1", "true", "yes"):
+            doc.add_paragraph(f'Transcription time: {format_duration_hms(elapsed_total)}')
+            doc.add_paragraph('')
         for para in formatted_text.split("\n\n"):
             if para.strip():
                 doc.add_paragraph(para.strip())

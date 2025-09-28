@@ -112,46 +112,14 @@ class UltraTextProcessor:
         self._initialize_models()
 
     def _initialize_models(self):
-        """Initialize available models based on what's installed."""
-        # Initialize punctuation model
-        if _punctuation_available:
-            try:
-                self.punctuation_model = PunctuationModel()
-                print("✅ Deep Multilingual Punctuation model loaded")
-            except Exception as e:
-                print(f"⚠️  Failed to load punctuation model: {e}")
+        """Initialize available models with light defaults (no env toggles, no downloads)."""
+        # Always run in light mode by default to ensure speed and stability
+        self.punctuation_model = None
+        self.use_spacy = False
+        self.use_nltk = False
+        print("🟡 ULTRA Light Mode: punctuation/spaCy/NLTK disabled by default")
 
-        # Initialize spaCy
-        if self.use_spacy and _spacy_available:
-            try:
-                # Try to load English model
-                try:
-                    self.nlp = spacy.load("en_core_web_sm")
-                except OSError:
-                    print("📥 Downloading spaCy English model...")
-                    os.system("python -m spacy download en_core_web_sm")
-                    self.nlp = spacy.load("en_core_web_sm")
-                print("✅ SpaCy English model loaded")
-            except Exception as e:
-                print(f"⚠️  Failed to load spaCy model: {e}")
-                self.use_spacy = False
-
-        # Initialize NLTK
-        if self.use_nltk and _nltk_available:
-            try:
-                # Download required NLTK data
-                nltk_data = ['punkt', 'averaged_perceptron_tagger', 'maxent_ne_chunker', 'words']
-                for data in nltk_data:
-                    try:
-                        nltk.data.find(f'tokenizers/{data}')
-                    except LookupError:
-                        nltk.download(data, quiet=True)
-                print("✅ NLTK components loaded")
-            except Exception as e:
-                print(f"⚠️  Failed to initialize NLTK: {e}")
-                self.use_nltk = False
-
-        # Initialize custom dictionary
+        # Initialize custom dictionary (lightweight)
         if _custom_dict_available:
             try:
                 self.custom_dict = CustomDictionary()

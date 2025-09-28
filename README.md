@@ -105,6 +105,16 @@ python transcribe_optimised.py --input "lecture.mp4" --vad
 python transcribe_optimised.py --input "large_file.mp4" --threads 16 --ram-gb 12 --vram-fraction 0.9
 ```
 
+### Biasing recognition with domain terms (awkward words)
+You can guide Whisper to “listen out for” special terms using an initial prompt built from your word list. Provide terms via one of these:
+
+- Place an `awkward_words.txt` (or `.md`) next to your input file
+- Or place `awkward_words.txt` in the repo root
+- Or set an env file path: `TRANSCRIBE_AWKWARD_FILE="C:\\path\\to\\my_terms.txt"`
+- Or set a comma list: `TRANSCRIBE_AWKWARD_TERMS="Schrödinger, Euler, Noether, Fourier"`
+
+Each line is one term; bullets like `-` or `*` are ignored. The installer will then pass a concise combined hint to Whisper as the initial prompt to improve recognition of those words.
+
 ### Performance Options
 
 **VAD (Voice Activity Detection)**
