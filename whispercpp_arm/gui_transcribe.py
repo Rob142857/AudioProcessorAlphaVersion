@@ -18,7 +18,11 @@ HAVE_ONNX_PUNCT: bool = False
 ort = None  # type: ignore
 np = None  # type: ignore
 try:
-    import onnxruntime as ort  # type: ignore
+    # Prefer DirectML build on Windows ARM for better availability
+    try:
+        import onnxruntime_directml as ort  # type: ignore
+    except Exception:
+        import onnxruntime as ort  # type: ignore
     import numpy as np  # type: ignore
     HAVE_ONNX_PUNCT = True
 except Exception:
@@ -45,8 +49,19 @@ def _ensure_punct_session(log_callback=None):
             if log_callback:
                 log_callback(f"Punctuation model not found at {PUNCTUATION_MODEL_PATH}; skipping punctuation.")
             return None
+        # Choose best available execution provider
+        providers = []
+        try:
+            avail = getattr(ort, 'get_available_providers', lambda: [])()
+        except Exception:
+            avail = []
+        if any('Dml' in p or 'DML' in p for p in avail):
+            providers = ['DmlExecutionProvider']
+        providers.append('CPUExecutionProvider')
+        if log_callback:
+            log_callback(f"Initializing ONNX punctuation with providers: {providers}")
         # mypy/pylance: ort guarded by HAVE_ONNX_PUNCT above
-        _PUNCT_SESSION = ort.InferenceSession(PUNCTUATION_MODEL_PATH, providers=['CPUExecutionProvider'])  # type: ignore
+        _PUNCT_SESSION = ort.InferenceSession(PUNCTUATION_MODEL_PATH, providers=providers)  # type: ignore
         return _PUNCT_SESSION
     except Exception as e:
         if log_callback:
