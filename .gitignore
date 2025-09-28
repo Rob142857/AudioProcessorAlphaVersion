@@ -14,6 +14,8 @@ __pycache__/
 # Keep important text files (don't ignore these even though we ignore *.txt above)
 !requirements.txt
 !README.md
+!awkward_words.txt
+!awkward_words.md
 
 # Audio / Video (generated or large files)
 *.mp3
