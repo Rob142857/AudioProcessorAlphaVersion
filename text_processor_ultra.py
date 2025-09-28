@@ -25,50 +25,8 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# Optional imports with fallbacks
-try:
-    from deepmultilingualpunctuation import PunctuationModel
-    _punctuation_available = True
-except ImportError:
-    PunctuationModel = None
-    _punctuation_available = False
-
-try:
-    import spacy
-    from spacy.lang.en import English
-    _spacy_available = True
-except ImportError:
-    spacy = None
-    English = None
-    _spacy_available = False
-
-try:
-    import nltk
-    from nltk.tokenize import sent_tokenize, word_tokenize
-    from nltk.tag import pos_tag
-    from nltk.chunk import ne_chunk
-    _nltk_available = True
-except ImportError:
-    nltk = None
-    sent_tokenize = None
-    word_tokenize = None
-    pos_tag = None
-    ne_chunk = None
-    _nltk_available = False
-
-try:
-    import textstat
-    _textstat_available = True
-except ImportError:
-    textstat = None
-    _textstat_available = False
-
-try:
-    from custom_dictionary import CustomDictionary
-    _custom_dict_available = True
-except ImportError:
-    CustomDictionary = None
-    _custom_dict_available = False
+# Lightweight dependency only (local module)
+from custom_dictionary import CustomDictionary
 
 
 class UltraTextProcessor:
@@ -90,8 +48,9 @@ class UltraTextProcessor:
             use_parallel: Whether to use parallel processing
             max_workers: Maximum number of worker threads (None = auto-detect)
         """
-        self.use_spacy = use_spacy and _spacy_available
-        self.use_nltk = use_nltk and _nltk_available
+    # Heavy NLP disabled in ULTRA light mode; flags ignored intentionally
+    self.use_spacy = False
+    self.use_nltk = False
         self.use_parallel = use_parallel
         
         # Determine optimal worker count
@@ -103,7 +62,6 @@ class UltraTextProcessor:
             self.max_workers = max(1, min(max_workers, cpu_count))
 
         # Initialize models
-        self.punctuation_model = None
         self.nlp = None
         self.custom_dict = None
         self.quality_metrics = {}
@@ -112,21 +70,16 @@ class UltraTextProcessor:
         self._initialize_models()
 
     def _initialize_models(self):
-        """Initialize available models with light defaults (no env toggles, no downloads)."""
-        # Always run in light mode by default to ensure speed and stability
-        self.punctuation_model = None
-        self.use_spacy = False
-        self.use_nltk = False
+        """Initialize available models with light defaults (no heavy NLP)."""
         print("🟡 ULTRA Light Mode: punctuation/spaCy/NLTK disabled by default")
 
         # Initialize custom dictionary (lightweight)
-        if _custom_dict_available:
-            try:
-                self.custom_dict = CustomDictionary()
-                print("✅ Custom dictionary loaded")
-            except Exception as e:
-                print(f"⚠️  Failed to load custom dictionary: {e}")
-                self.custom_dict = None
+        try:
+            self.custom_dict = CustomDictionary()
+            print("✅ Custom dictionary loaded")
+        except Exception as e:
+            print(f"⚠️  Failed to load custom dictionary: {e}")
+            self.custom_dict = None
 
     def process_text_ultra(self, text: str, passes: int = 6) -> str:
         """
@@ -261,15 +214,7 @@ class UltraTextProcessor:
 
     def _pass_1_basic_punctuation(self, text: str) -> str:
         """Pass 1: Basic punctuation restoration using specialized models."""
-        if self.punctuation_model:
-            try:
-                # Apply punctuation model twice for better results
-                text = self.punctuation_model.restore_punctuation(text)
-                text = self.punctuation_model.restore_punctuation(text)  # Second pass
-            except Exception as e:
-                print(f"⚠️  Punctuation model failed: {e}")
-        
-        # Basic punctuation fixes
+        # Basic punctuation fixes (lightweight)
         text = re.sub(r'\s+([,.!?;:])', r'\1', text)  # Remove space before punctuation
         text = re.sub(r'([,.!?;:])\s*', r'\1 ', text)  # Ensure space after punctuation
         text = re.sub(r'\s+', ' ', text)  # Normalize spaces
@@ -284,37 +229,17 @@ class UltraTextProcessor:
     
     def _pass_3_sentence_segmentation(self, text: str) -> str:
         """Pass 2: Advanced sentence segmentation and boundary detection."""
-        if self.use_spacy and self.nlp:
-            try:
-                doc = self.nlp(text)
-                sentences = []
-                for sent in doc.sents:
-                    sentence = sent.text.strip()
-                    if sentence:
-                        # Ensure proper sentence capitalization
-                        if sentence and not sentence[0].isupper():
-                            sentence = sentence[0].upper() + sentence[1:]
-                        sentences.append(sentence)
-                text = '. '.join(sentences)
-                if text and not text.endswith(('.', '!', '?')):
-                    text += '.'
-            except Exception as e:
-                print(f"⚠️  SpaCy sentence segmentation failed: {e}")
-        
-        elif self.use_nltk and sent_tokenize:
-            try:
-                sentences = sent_tokenize(text)
-                processed_sentences = []
-                for sentence in sentences:
-                    sentence = sentence.strip()
-                    if sentence and not sentence[0].isupper():
-                        sentence = sentence[0].upper() + sentence[1:]
-                    processed_sentences.append(sentence)
-                text = ' '.join(processed_sentences)
-            except Exception as e:
-                print(f"⚠️  NLTK sentence segmentation failed: {e}")
-        
-        return text
+        # Regex-based sentence segmentation
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        processed_sentences = []
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            if not sentence[0].isupper():
+                sentence = sentence[0].upper() + sentence[1:]
+            processed_sentences.append(sentence)
+        return ' '.join(processed_sentences)
 
     def _pass_4_capitalization(self, text: str) -> str:
         """Pass 3: Advanced capitalization and proper noun handling."""
@@ -495,14 +420,6 @@ class UltraTextProcessor:
                 'avg_processing_speed': len(original) / elapsed if elapsed > 0 else 0,
             }
             
-            if _textstat_available and textstat:
-                try:
-                    metrics['readability_original'] = textstat.flesch_reading_ease(original)
-                    metrics['readability_processed'] = textstat.flesch_reading_ease(processed)
-                    metrics['readability_improvement'] = metrics['readability_processed'] - metrics['readability_original']
-                except:
-                    pass
-            
             self.quality_metrics = metrics
             
             print(f"📊 Text Processing Quality Metrics:")
@@ -511,14 +428,7 @@ class UltraTextProcessor:
             print(f"   📝 Sentences: {metrics['sentences_original']} → {metrics['sentences_processed']}")
             print(f"   🚀 Processing speed: {metrics['avg_processing_speed']:.0f} chars/sec")
             
-            if 'readability_improvement' in metrics:
-                improvement = metrics['readability_improvement']
-                if improvement > 0:
-                    print(f"   📈 Readability improved by {improvement:.1f} points")
-                elif improvement < -5:
-                    print(f"   📉 Readability decreased by {abs(improvement):.1f} points")
-                else:
-                    print(f"   📊 Readability maintained ({improvement:+.1f} points)")
+            # Readability metrics removed to avoid heavy deps
                     
         except Exception as e:
             print(f"⚠️  Quality assessment failed: {e}")
