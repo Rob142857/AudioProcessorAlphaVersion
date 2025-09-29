@@ -4,6 +4,7 @@ This module provides a high-quality single-file transcription path that avoids
 re-importing torch and aggressively clearing only model-level caches between runs.
 """
 import warnings
+import re
 warnings.filterwarnings("ignore", category=UserWarning, module="webrtcvad")
 
 import os
@@ -303,11 +304,11 @@ def load_awkward_terms(input_path: str) -> list:
         if s not in cleaned:
             cleaned.append(s)
 
-    # Cap length to keep prompt small
-    return cleaned[:100]
+    # Cap length to keep prompt small and focused
+    return cleaned[:40]
 
 
-def build_initial_prompt(terms: list, max_chars: int = 800) -> Optional[str]:
+def build_initial_prompt(terms: list, max_chars: int = 400) -> Optional[str]:
     """Build a concise initial_prompt string to bias Whisper.
 
     Keeps capitalization as provided; trims to max_chars.
@@ -317,13 +318,44 @@ def build_initial_prompt(terms: list, max_chars: int = 800) -> Optional[str]:
     try:
         # Join terms with semicolons for clarity
         payload = '; '.join(terms)
-        base = "Use these domain-specific terms exactly as written when recognized. Maintain capitalization: "
+        base = (
+            "If and only if these domain terms are clearly spoken, prefer them exactly as written; "
+            "otherwise ignore them. Do not force, repeat, or overuse these terms. Maintain capitalization: "
+        )
         prompt = (base + payload).strip()
         if len(prompt) > max_chars:
             prompt = prompt[: max_chars - 3].rstrip() + '...'
         return prompt
     except Exception:
         return None
+
+# --- Artifact mitigation: collapse excessive exact repetitions ----------------
+def _collapse_repetitions(text: str, max_repeats: int = 3) -> str:
+    """Collapse excessive immediate repetitions of the same phrase.
+
+    This targets simple loops like "to grow, to grow, to grow, ..." and reduces
+    them to at most `max_repeats` consecutive occurrences.
+    """
+    try:
+        # Normalize spaces around commas for matching
+        t = re.sub(r"\s*,\s*", ", ", text)
+        # Build a regex that captures a short phrase (1-6 words) repeated many times
+        # Words may include apostrophes; keep phrases modest to avoid over-collapsing
+        pattern = r"\b((?:[A-Za-z']+\s+){0,5}[A-Za-z']+)\b(?:,\s*\1\b){" + str(max_repeats) + ",}"
+
+        def repl(m):
+            phrase = m.group(1)
+            return ", ".join([phrase] * max_repeats)
+
+        # Apply repeatedly a few times to catch nested patterns
+        for _ in range(2):
+            new_t = re.sub(pattern, repl, t)
+            if new_t == t:
+                break
+            t = new_t
+        return t
+    except Exception:
+        return text
 
 
 def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threads_override: Optional[int] = None):
@@ -505,7 +537,6 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                     condition_on_previous_text=True,  # Enable context from previous segments
                     temperature=0.0,
                     verbose=False,  # Reduce verbosity for batch processing
-                    suppress_tokens="-1",  # Disable token suppression for guardrail removal
                 )
                 if initial_prompt:
                     seg_kwargs["initial_prompt"] = initial_prompt
@@ -551,6 +582,8 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
 
     # Post-processing (same as original)
     try:
+        # Collapse excessive repetitions prior to punctuation restoration
+        full_text = _collapse_repetitions(full_text, max_repeats=3)
         pm = PunctuationModel()
         t0 = time.time()
         full_text = pm.restore_punctuation(full_text)
@@ -1414,7 +1447,6 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 "condition_on_previous_text": False,
                 "temperature": 0.0,
                 "verbose": True,
-                "suppress_tokens": "-1",  # Disable token suppression for guardrail removal
             }
             if initial_prompt:
                 transcribe_kwargs["initial_prompt"] = initial_prompt
@@ -1663,6 +1695,8 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             
             # Ultra processing with 6 passes for maximum quality
             ultra_processor = create_ultra_processor(max_workers=text_workers)
+            # First, collapse obvious repetitions to avoid amplifying loops downstream
+            full_text = _collapse_repetitions(full_text, max_repeats=3)
             full_text = ultra_processor.process_text_ultra(full_text, passes=6)
             
             t1 = time.time()
