@@ -48,9 +48,9 @@ class UltraTextProcessor:
             use_parallel: Whether to use parallel processing
             max_workers: Maximum number of worker threads (None = auto-detect)
         """
-    # Heavy NLP disabled in ULTRA light mode; flags ignored intentionally
-    self.use_spacy = False
-    self.use_nltk = False
+        # Heavy NLP disabled in ULTRA light mode; flags ignored intentionally
+        self.use_spacy = False
+        self.use_nltk = False
         self.use_parallel = use_parallel
         
         # Determine optimal worker count

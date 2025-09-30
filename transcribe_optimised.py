@@ -1697,14 +1697,26 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             ultra_processor = create_ultra_processor(max_workers=text_workers)
             # First, collapse obvious repetitions to avoid amplifying loops downstream
             full_text = _collapse_repetitions(full_text, max_repeats=3)
+            # Restore punctuation using a lightweight model so sentences can be segmented properly
+            try:
+                from deepmultilingualpunctuation import PunctuationModel
+                pm_ultra = PunctuationModel()
+                full_text = pm_ultra.restore_punctuation(full_text)
+            except Exception as punc_e:
+                print(f"⚠️  Punctuation pre-pass unavailable: {punc_e} — proceeding with ULTRA-only punctuation fixes")
             full_text = ultra_processor.process_text_ultra(full_text, passes=6)
             
             t1 = time.time()
             print(f"✅ Ultra text processing completed ({t1 - t0:.1f}s)")
             
             # Advanced paragraph formatting
-            paragraph_formatter = create_advanced_paragraph_formatter(max_workers=text_workers)
-            formatted_text = paragraph_formatter.format_paragraphs_advanced(full_text, target_length=600)
+            try:
+                paragraph_formatter = create_advanced_paragraph_formatter(max_workers=text_workers)
+                formatted_text = paragraph_formatter.format_paragraphs_advanced(full_text, target_length=600)
+            except Exception as pf_e:
+                print(f"⚠️  Advanced paragraph formatter failed: {pf_e} — using basic split_into_paragraphs")
+                formatted = split_into_paragraphs(full_text, max_length=600)
+                formatted_text = "\n\n".join(formatted) if isinstance(formatted, list) else full_text
             
             t2 = time.time()
             print(f"✅ Advanced paragraph formatting completed ({t2 - t1:.1f}s)")
