@@ -1,3 +1,13 @@
 {
-  "domain_terms_file": "c:\\Users\\RobertEvans\\Downloads\\AudioProcessorAlphaVersion\\awkward_words.txt"
+  "domain_terms_file": "c:\\Users\\RobertEvans\\Downloads\\AudioProcessorAlphaVersion\\awkward_words.txt",
+  "projects": {
+    "C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_PG Completed Recordings 84-97/1984 MW": {
+      "domain_terms_file": "C:\\Users\\RobertEvans\\Downloads\\AudioProcessorAlphaVersion\\awkward_words.txt",
+      "recursive": 0,
+      "skip_existing": 1,
+      "time_header": 1,
+      "quality_mode": 1,
+      "max_repeat_cap": 3
+    }
+  }
 }

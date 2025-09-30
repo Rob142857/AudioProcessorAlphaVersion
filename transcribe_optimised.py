@@ -82,14 +82,15 @@ def preprocess_audio_with_padding(input_path: str, temp_dir: str = None) -> str:
         
         # FFmpeg command to:
         # 1. Add 1 second silence at start: adelay=1000|1000 (1000ms delay for both channels)
-        # 2. Normalize audio levels (loudnorm)
-        # 3. Add 1 second silence at end using apad
-        # 4. Convert to high-quality MP3 (320kbps)
+        # 2. Apply noise reduction for old digitized tapes (highpass, lowpass, afftdn)
+        # 3. Normalize audio levels (loudnorm)
+        # 4. Add 1 second silence at end using apad
+        # 5. Convert to high-quality MP3 (320kbps)
         cmd = [
             ffmpeg_cmd,
             "-i", input_path,
-            # Audio processing filters (combined in a single chain)
-            "-af", "adelay=1000|1000,loudnorm,apad=pad_len=48000",  # 1s delay -> normalize -> 1s pad (48kHz)
+            # Audio processing filters (enhanced for old digitized tapes)
+            "-af", "adelay=1000|1000,highpass=f=80,lowpass=f=8000,afftdn=nf=-25,loudnorm,apad=pad_len=48000",  # Enhanced filters for old tapes
             # High quality MP3 encoding
             "-codec:a", "libmp3lame",
             "-b:a", "320k",
@@ -337,6 +338,14 @@ def _collapse_repetitions(text: str, max_repeats: int = 3) -> str:
     them to at most `max_repeats` consecutive occurrences.
     """
     try:
+        # Check for environment override for max repeats
+        env_max_repeats = os.environ.get("TRANSCRIBE_MAX_REPEAT_CAP", "").strip()
+        if env_max_repeats:
+            try:
+                max_repeats = max(1, min(10, int(env_max_repeats)))  # Cap between 1-10
+            except Exception:
+                pass  # Use default if invalid
+        
         # Normalize spaces around commas for matching
         t = re.sub(r"\s*,\s*", ", ", text)
         # Build a regex that captures a short phrase (1-6 words) repeated many times
@@ -538,6 +547,14 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                     temperature=0.0,
                     verbose=False,  # Reduce verbosity for batch processing
                 )
+                
+                # Apply quality mode if enabled
+                quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
+                if quality_mode:
+                    seg_kwargs["beam_size"] = 5
+                    seg_kwargs["patience"] = 2.0
+                    print("🎯 Quality mode enabled: beam_size=5, patience=2.0")
+                
                 if initial_prompt:
                     seg_kwargs["initial_prompt"] = initial_prompt
                 result = model.transcribe(segment_audio, **seg_kwargs)
@@ -1448,6 +1465,14 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 "temperature": 0.0,
                 "verbose": True,
             }
+            
+            # Apply quality mode if enabled
+            quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
+            if quality_mode:
+                transcribe_kwargs["beam_size"] = 5
+                transcribe_kwargs["patience"] = 2.0
+                print("🎯 Quality mode enabled: beam_size=5, patience=2.0")
+            
             if initial_prompt:
                 transcribe_kwargs["initial_prompt"] = initial_prompt
 
@@ -1560,6 +1585,13 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 "temperature": 0.0,
                 "verbose": True,
             }
+            
+            # Apply quality mode if enabled (CPU fallback)
+            quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
+            if quality_mode:
+                cpu_transcribe_kwargs["beam_size"] = 5
+                cpu_transcribe_kwargs["patience"] = 2.0
+            
             if initial_prompt:
                 cpu_transcribe_kwargs["initial_prompt"] = initial_prompt
 

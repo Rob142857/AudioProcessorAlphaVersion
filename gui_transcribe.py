@@ -48,6 +48,19 @@ def _save_settings(data: dict) -> None:
     except Exception:
         pass
 
+def _load_project_settings(folder_path: str) -> dict:
+    """Load settings specific to a project folder."""
+    all_settings = _load_settings()
+    return all_settings.get('projects', {}).get(folder_path, {})
+
+def _save_project_settings(folder_path: str, proj_settings: dict) -> None:
+    """Save settings specific to a project folder."""
+    all_settings = _load_settings()
+    if 'projects' not in all_settings:
+        all_settings['projects'] = {}
+    all_settings['projects'][folder_path] = proj_settings
+    _save_settings(all_settings)
+
 def _repo_default_terms_file() -> Optional[str]:
     for name in ("awkward_words.txt", "awkward_words.md"):
         p = os.path.join(REPO_ROOT, name)
@@ -296,8 +309,8 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         mainframe.columnconfigure(0, weight=1)
         mainframe.columnconfigure(1, weight=1)
         mainframe.columnconfigure(2, weight=1)
-        mainframe.rowconfigure(8, weight=1)
-        mainframe.rowconfigure(9, minsize=60)
+        mainframe.rowconfigure(11, weight=1)
+        mainframe.rowconfigure(12, minsize=60)
 
         # Title
         title_frame = ttk.Frame(mainframe, style='Clean.TFrame')
@@ -332,6 +345,14 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                 try:
                     files = [f for f in os.listdir(d) if os.path.splitext(f)[1].lower() in SUPPORTED_EXTS]
                     status_label.config(text=f"Selected folder: {os.path.basename(d)} ({len(files)} eligible files)", foreground='#059669')
+                    # Reload project settings for the new folder
+                    proj_settings = _load_project_settings(d)
+                    domain_var.set(proj_settings.get("domain_terms_file", _repo_default_terms_file() or ""))
+                    recursive_var.set(proj_settings.get("recursive", 0))
+                    skip_existing_var.set(proj_settings.get("skip_existing", 1))
+                    time_header_var.set(proj_settings.get("time_header", 1))
+                    quality_mode_var.set(proj_settings.get("quality_mode", 1))
+                    max_repeat_var.set(proj_settings.get("max_repeat_cap", 3))
                 except Exception:
                     status_label.config(text=f"Selected folder: {os.path.basename(d)}", foreground='#059669')
 
@@ -353,9 +374,10 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
 
         # Row 4: Domain terms file (awkward words)
         tk.Label(combined_frame, text="Domain terms file (optional):", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=0, row=4, sticky='w', padx=20, pady=(0, 6))
-        # Determine default domain file: from settings or repo-root fallback
-        _settings = _load_settings()
-        _saved_domain = _settings.get("domain_terms_file")
+        # Determine default domain file: from project settings or repo-root fallback
+        current_folder = os.path.dirname(input_var.get()) if input_var.get() else REPO_ROOT
+        proj_settings = _load_project_settings(current_folder)
+        _saved_domain = proj_settings.get("domain_terms_file")
         _default_domain = _saved_domain if (_saved_domain and os.path.exists(_saved_domain)) else (_repo_default_terms_file() or "")
         domain_var = tk.StringVar(value=_default_domain)
         tk.Entry(combined_frame, textvariable=domain_var, bg='#f9fafb', fg='#111827', relief='flat').grid(column=1, row=4, sticky='ew', padx=(12, 6), pady=(0, 6))
@@ -368,14 +390,20 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
             p = filedialog.askopenfilename(title="Select domain terms file (one term per line)", filetypes=[("Text/Markdown", "*.txt *.md"), ("All Files", "*.*")])
             if p:
                 domain_var.set(p)
-                # Persist selection
-                s = _load_settings(); s["domain_terms_file"] = p; _save_settings(s)
+                # Persist selection per project
+                current_folder = os.path.dirname(input_var.get()) if input_var.get() else REPO_ROOT
+                proj_settings = _load_project_settings(current_folder)
+                proj_settings["domain_terms_file"] = p
+                _save_project_settings(current_folder, proj_settings)
         tk.Button(controls_frame, text="Browse", command=browse_domain_file, font=('Segoe UI', 9, 'bold'), bg='#10b981', fg='white', relief='flat', borderwidth=0, padx=12, pady=4, activebackground='#059669', activeforeground='white').pack(side='left', padx=(0, 6))
 
         def clear_domain_file():
             domain_var.set("")
-            # Persist clear
-            s = _load_settings(); s["domain_terms_file"] = ""; _save_settings(s)
+            # Persist clear per project
+            current_folder = os.path.dirname(input_var.get()) if input_var.get() else REPO_ROOT
+            proj_settings = _load_project_settings(current_folder)
+            proj_settings["domain_terms_file"] = ""
+            _save_project_settings(current_folder, proj_settings)
         tk.Button(controls_frame, text="Clear", command=clear_domain_file, font=('Segoe UI', 9), bg='#e5e7eb', fg='#111827', relief='flat', borderwidth=0, padx=12, pady=4, activebackground='#d1d5db', activeforeground='#111827').pack(side='left', padx=(0, 6))
 
         def open_sample_terms():
@@ -402,33 +430,44 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                 messagebox.showerror("Open sample terms", f"Failed to open sample terms file: {e}")
         tk.Button(controls_frame, text="Open sample", command=open_sample_terms, font=('Segoe UI', 9), bg='#f3f4f6', fg='#111827', relief='flat', borderwidth=0, padx=12, pady=4, activebackground='#e5e7eb', activeforeground='#111827').pack(side='left')
 
-        # Row 3b: Max performance mode (shifted to row 5)
+        # Row 5: Max performance mode
         max_perf_var = tk.IntVar(value=1)
         tk.Checkbutton(combined_frame, text="Maximise performance (use all cores, high priority, aggressive VRAM)", variable=max_perf_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=5, columnspan=4, sticky='w', padx=20, pady=(0, 8))
 
-        # Row 4a: Batch options (shifted to row 6)
-        recursive_var = tk.IntVar(value=0)
-        skip_existing_var = tk.IntVar(value=1)
+        # Row 6: Batch options
+        recursive_var = tk.IntVar(value=proj_settings.get("recursive", 0))
+        skip_existing_var = tk.IntVar(value=proj_settings.get("skip_existing", 1))
         tk.Checkbutton(combined_frame, text="Process subfolders (recursive)", variable=recursive_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=6, columnspan=2, sticky='w', padx=20, pady=(0, 8))
         tk.Checkbutton(combined_frame, text="Skip files with existing outputs (.txt and .docx)", variable=skip_existing_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=2, row=6, columnspan=2, sticky='w', padx=20, pady=(0, 8))
 
-        # Row 6b: Output options (time header)
-        time_header_var = tk.IntVar(value=1)
+        # Row 7: Output options
+        time_header_var = tk.IntVar(value=proj_settings.get("time_header", 1))
         tk.Checkbutton(combined_frame, text="Show 'Transcription time' in DOCX header", variable=time_header_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=7, columnspan=4, sticky='w', padx=20, pady=(0, 8))
 
-        # Row 5: Compact description
+        # Thin separator before quality options
+        ttk.Separator(combined_frame, orient='horizontal').grid(column=0, row=8, columnspan=4, sticky='ew', padx=20, pady=(4, 10))
+
+        # Row 9: Quality options
+        quality_mode_var = tk.IntVar(value=proj_settings.get("quality_mode", 1))  # Default to ON
+        tk.Checkbutton(combined_frame, text="Quality mode (Whisper beam search, better punctuation)", variable=quality_mode_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=9, columnspan=2, sticky='w', padx=20, pady=(0, 6))
+
+        tk.Label(combined_frame, text="Max repeat cap:", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=2, row=9, sticky='w', padx=(20, 6), pady=(0, 6))
+        max_repeat_var = tk.IntVar(value=proj_settings.get("max_repeat_cap", 3))
+        tk.Spinbox(combined_frame, from_=1, to=10, textvariable=max_repeat_var, width=5, bg='#f9fafb', fg='#111827', relief='flat').grid(column=3, row=9, sticky='w', padx=(6, 20), pady=(0, 6))
+
+        # Row 10: Compact description
         desc = (
             "Whisper large-v3-turbo • Auto device (CUDA/DirectML/CPU) • Direct audio • RAM-optimized threads\n"
             "Outputs saved next to source file(s)."
         )
-        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=8, columnspan=4, sticky='w', padx=20, pady=(8, 16))
+        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=10, columnspan=4, sticky='w', padx=20, pady=(8, 16))
 
         # Handlers attached to the buttons above
 
         # Log
-        ttk.Label(mainframe, text="Activity Log", style='Section.TLabel').grid(column=0, row=7, columnspan=3, sticky="w", pady=(0, 15))
+        ttk.Label(mainframe, text="Activity Log", style='Section.TLabel').grid(column=0, row=10, columnspan=3, sticky="w", pady=(0, 15))
         log_frame = tk.Frame(mainframe, bg='white', relief='flat', borderwidth=1)
-        log_frame.grid(column=0, row=8, columnspan=3, sticky="nsew", pady=(0, 25))
+        log_frame.grid(column=0, row=11, columnspan=3, sticky="nsew", pady=(0, 25))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         log_text = tk.Text(log_frame, wrap=tk.WORD, height=25, font=('Segoe UI', 9), bg='white', fg='#2c3e50', borderwidth=0, highlightthickness=0, insertbackground='#2c3e50')
@@ -508,8 +547,16 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                             q.put(f"Using domain terms file: {os.path.basename(dom_path)}\n")
                         else:
                             os.environ.pop("TRANSCRIBE_AWKWARD_FILE", None)
-                        # Persist current selection
-                        s = _load_settings(); s["domain_terms_file"] = dom_path; _save_settings(s)
+                        # Persist current selection per project
+                        current_folder = os.path.dirname(inp) if os.path.isfile(inp) else inp
+                        proj_settings = _load_project_settings(current_folder)
+                        proj_settings["domain_terms_file"] = dom_path
+                        proj_settings["recursive"] = recursive_var.get()
+                        proj_settings["skip_existing"] = skip_existing_var.get()
+                        proj_settings["time_header"] = time_header_var.get()
+                        proj_settings["quality_mode"] = quality_mode_var.get()
+                        proj_settings["max_repeat_cap"] = max_repeat_var.get()
+                        _save_project_settings(current_folder, proj_settings)
                         
                     except Exception as e:
                         q.put(f"Warning: could not apply domain terms file: {e}\n")
@@ -520,6 +567,16 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                             os.environ.pop("TRANSCRIBE_HIDE_TIME", None)
                         else:
                             os.environ["TRANSCRIBE_HIDE_TIME"] = "1"
+                    except Exception:
+                        pass
+
+                    # Apply quality mode and max repeat cap
+                    try:
+                        if quality_mode_var.get() == 1:
+                            os.environ["TRANSCRIBE_QUALITY_MODE"] = "1"
+                        else:
+                            os.environ.pop("TRANSCRIBE_QUALITY_MODE", None)
+                        os.environ["TRANSCRIBE_MAX_REPEAT_CAP"] = str(max_repeat_var.get())
                     except Exception:
                         pass
 
@@ -585,7 +642,7 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
             threading.Thread(target=worker, daemon=True).start()
 
         run_btn = tk.Button(mainframe, text="Start Transcription", command=start_transcription_thread, font=('Segoe UI', 12, 'bold'), bg='#007acc', fg='white', relief='flat', borderwidth=0, padx=30, pady=12, activebackground='#0056b3', activeforeground='white', cursor='hand2')
-        run_btn.grid(column=1, row=9, pady=(10, 0))
+        run_btn.grid(column=1, row=12, pady=(10, 0))
         poll_queue()
         root.mainloop()
     except Exception as e:
