@@ -24,6 +24,30 @@
       "time_header": 1,
       "quality_mode": 1,
       "max_repeat_cap": 3
+    },
+    "C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_PG Completed Recordings 84-97/1986 MW": {
+      "domain_terms_file": "c:\\Users\\RobertEvans\\Downloads\\AudioProcessorAlphaVersion\\awkward_words.txt",
+      "recursive": 0,
+      "skip_existing": 1,
+      "time_header": 1,
+      "quality_mode": 1,
+      "max_repeat_cap": 3
+    },
+    "C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_Personal/_Activities/Joe-Tapes/Dr G mp3 files": {
+      "domain_terms_file": "c:\\Users\\RobertEvans\\Downloads\\AudioProcessorAlphaVersion\\awkward_words.txt",
+      "recursive": 1,
+      "skip_existing": 1,
+      "time_header": 1,
+      "quality_mode": 1,
+      "max_repeat_cap": 3
+    },
+    "C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_PG Completed Recordings 84-97": {
+      "domain_terms_file": "c:\\Users\\RobertEvans\\Downloads\\AudioProcessorAlphaVersion\\awkward_words.txt",
+      "recursive": 1,
+      "skip_existing": 1,
+      "time_header": 1,
+      "quality_mode": 1,
+      "max_repeat_cap": 3
     }
   }
 }
