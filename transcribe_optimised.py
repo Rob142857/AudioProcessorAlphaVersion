@@ -560,13 +560,18 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         config["cpu_threads"] = max(1, min(64, threads_override))
 
     torch_api.set_num_threads(config["cpu_threads"])
+    interop = max(2, min(16, config["cpu_threads"] // 4))
     try:
-        interop = max(2, min(16, config["cpu_threads"] // 4))
         torch_api.set_num_interop_threads(interop)
     except Exception:
         pass
 
-    print(f"🧵 PyTorch threads set to: {config['cpu_threads']}")
+    # Explicit thread configuration logging
+    print(f"🔧 Thread Configuration:")
+    print(f"   • CPU Threads: {config['cpu_threads']}")
+    print(f"   • Interop Threads: {interop}")
+    print(f"   • Device: {device_name}")
+    print(f"   • Model: {selected_model_name}")
 
     # Build optional initial_prompt from awkward terms
     awkward_terms = load_awkward_terms(input_path)
@@ -1484,6 +1489,13 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     else:
         interop = max(2, min(16, config["cpu_threads"] // 4))
     
+    # Explicit thread configuration logging
+    print(f"🔧 Thread Configuration:")
+    print(f"   • CPU Threads: {config['cpu_threads']}")
+    print(f"   • Interop Threads: {interop}")
+    print(f"   • Device: {device_name}")
+    print(f"   • Model: {selected_model_name}")
+    
     try:
         torch_api.set_num_interop_threads(interop)
     except Exception:
@@ -1594,14 +1606,15 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     transcribe_thread.start()
 
     start_watch = time.time()
-    timeout_minutes = 60
-    print(f"⏱️  Monitoring transcription progress (timeout: {timeout_minutes} minutes)...")
+    # No timeout - let transcription complete naturally
+    print(f"⏱️  Monitoring transcription progress (no timeout)...")
+
 
     # Initialize CPU/RAM monitoring
     import psutil
     process = psutil.Process(os.getpid())
 
-    while not transcription_complete and (time.time() - start_watch) < (timeout_minutes * 60):
+    while not transcription_complete:
         time.sleep(5)
         if torch_api.cuda.is_available() and chosen_device == "cuda":
             try:
@@ -1641,65 +1654,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             except Exception as e:
                 print(f"⚠️  GPU monitoring error: {e}")
 
-    # Timeout -> CPU fallback
-    if not transcription_complete:
-        print(f"⏰ Transcription timed out after {timeout_minutes} minutes; falling back to CPU...")
-        if torch_api.cuda.is_available():
-            try:
-                torch_api.cuda.empty_cache()
-                torch_api.cuda.synchronize()
-            except Exception:
-                pass
-        try:
-            model = whisper.load_model(selected_model_name, device="cpu")
-            torch_api.set_num_threads(config["cpu_threads"])
-
-            # Apply VAD segmentation if enabled (CPU fallback)
-            cpu_transcribe_kwargs = {
-                "language": None,
-                "compression_ratio_threshold": 2.4,
-                "logprob_threshold": -2.0,
-                "no_speech_threshold": 0.3,
-                "condition_on_previous_text": False,
-                "temperature": 0.0,
-                "verbose": True,
-            }
-            
-            # Apply quality mode if enabled (CPU fallback)
-            quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
-            if quality_mode:
-                cpu_transcribe_kwargs["beam_size"] = 5
-                cpu_transcribe_kwargs["patience"] = 2.0
-            
-            if initial_prompt:
-                cpu_transcribe_kwargs["initial_prompt"] = initial_prompt
-
-            if use_vad:
-                try:
-                    # VAD CONTROL: Allow disabling VAD when ordering issues occur (CPU fallback)  
-                    if config.get('disable_vad', False):
-                        print("⚠️  VAD processing DISABLED (CPU fallback) - using full file transcription for guaranteed temporal order")
-                    elif _vad_functions_available:
-                        vad_segments = vad_segment_times(working_input_path)
-                        if vad_segments and len(vad_segments) > 0:
-                            print(f"🎯 VAD detected {len(vad_segments)} speech segments (CPU fallback) - processing in parallel")
-                            print("💡 If transcript beginnings are missing, set 'disable_vad': True in config")
-                            # Use actual VAD segmentation with parallel processing
-                            transcription_result = transcribe_with_vad_parallel(working_input_path, vad_segments, model, cpu_transcribe_kwargs, config)
-                            transcription_error = None
-                        else:
-                            print("⚠️  VAD enabled but no segments detected (CPU fallback), proceeding without VAD")
-                    else:
-                        print("⚠️  VAD functions not available (CPU fallback), proceeding without VAD")
-                except Exception as vad_e:
-                    print(f"⚠️  VAD segmentation failed (CPU fallback): {vad_e} - proceeding without VAD")
-                    use_vad = False  # Disable for this run
-
-            transcription_result = model.transcribe(working_input_path, **cpu_transcribe_kwargs)
-            transcription_error = None
-        except Exception as cpu_e:
-            raise Exception(f"Both GPU and CPU transcription timed out/failed: {cpu_e}")
-
+    # No timeout fallback - transcription completes naturally
     if transcription_error:
         raise Exception(f"Transcription failed: {transcription_error}")
 
