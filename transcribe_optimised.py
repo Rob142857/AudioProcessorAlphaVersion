@@ -438,17 +438,17 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     device_name = "CPU"
     model = None
     chosen_device = "cpu"
-    selected_model_name = "large-v3-turbo"
+    selected_model_name = "large-v3"
 
     try:
         avail = set(whisper.available_models())
-        turbo_available = ("large-v3-turbo" in avail)
-        if not turbo_available:
-            for cand in ("large-v3", "large"):
+        v3_available = ("large-v3" in avail)
+        if not v3_available:
+            for cand in ("large-v2", "large"):
                 if cand in avail:
                     selected_model_name = cand
                     break
-        print(f"🧩 Whisper turbo available: {turbo_available}")
+        print(f"🧩 Whisper large-v3 available: {v3_available}")
         print(f"🗂️  Selecting model: {selected_model_name}")
     except Exception as e:
         print(f"⚠️  Could not query whisper.available_models(): {e}")
@@ -1286,19 +1286,19 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     device_name = "CPU"
     model: Any = None
     chosen_device = "cpu"
-    selected_model_name = "large-v3-turbo"  # default preference
+    selected_model_name = "large-v3"  # default preference
 
-    # Prefer turbo; if it's not listed as available, fall back to the next best
+    # Prefer large-v3; if it's not listed as available, fall back to the next best
     try:
         import whisper  # type: ignore
         avail = set(whisper.available_models())
-        turbo_available = ("large-v3-turbo" in avail)
-        if not turbo_available:
-            for cand in ("large-v3", "large"):
+        v3_available = ("large-v3" in avail)
+        if not v3_available:
+            for cand in ("large-v2", "large"):
                 if cand in avail:
                     selected_model_name = cand
                     break
-        print(f"🧩 Whisper turbo available: {turbo_available}")
+        print(f"🧩 Whisper large-v3 available: {v3_available}")
         print(f"🗂️  Selecting model: {selected_model_name}")
     except Exception as e:
         print(f"⚠️  Could not query whisper.available_models(): {e}. Proceeding with '{selected_model_name}'.")
