@@ -130,8 +130,11 @@ def run_transcription(input_file: str, outdir: Optional[str], output_queue: queu
         # Determine output dir (default to same folder as source file)
         target_outdir = outdir if outdir else os.path.dirname(input_file)
 
+        # Get model name from environment variable (set by GUI)
+        model_name = os.environ.get("TRANSCRIBE_MODEL_NAME", "large-v3")
+
         output_queue.put("Starting transcription for: {}\n".format(os.path.basename(input_file)))
-        output_queue.put("Using Whisper large-v3 (auto device selection)\n")
+        output_queue.put("Using Whisper {} (auto device selection)\n".format(model_name))
         output_queue.put("Direct processing, maximum threads\n")
 
         out_txt = transcribe_file_simple_auto(
@@ -455,12 +458,43 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         max_repeat_var = tk.IntVar(value=proj_settings.get("max_repeat_cap", 3))
         tk.Spinbox(combined_frame, from_=1, to=10, textvariable=max_repeat_var, width=5, bg='#f9fafb', fg='#111827', relief='flat').grid(column=3, row=9, sticky='w', padx=(6, 20), pady=(0, 6))
 
-        # Row 10: Compact description
+        # Row 9b: Model selection (large-v3-turbo vs large-v3)
+        tk.Label(combined_frame, text="Whisper Model:", bg='white', fg='#374151', font=('Segoe UI', 10, 'bold')).grid(column=0, row=10, sticky='w', padx=20, pady=(8, 6))
+        model_choice_var = tk.StringVar(value=proj_settings.get("whisper_model", "large-v3-turbo"))  # Default to turbo for speed
+        
+        model_frame = tk.Frame(combined_frame, bg='white')
+        model_frame.grid(column=1, row=10, columnspan=3, sticky='w', padx=(12, 20), pady=(8, 6))
+        
+        tk.Radiobutton(
+            model_frame, 
+            text="large-v3-turbo (faster, realtime capable)", 
+            variable=model_choice_var, 
+            value="large-v3-turbo",
+            bg='white', 
+            fg='#374151', 
+            selectcolor='white', 
+            activebackground='white',
+            font=('Segoe UI', 9)
+        ).pack(side='left', padx=(0, 20))
+        
+        tk.Radiobutton(
+            model_frame, 
+            text="large-v3 (more accurate, slower)", 
+            variable=model_choice_var, 
+            value="large-v3",
+            bg='white', 
+            fg='#374151', 
+            selectcolor='white', 
+            activebackground='white',
+            font=('Segoe UI', 9)
+        ).pack(side='left')
+
+        # Row 11: Compact description
         desc = (
-            "Whisper large-v3 • Auto device (CUDA/DirectML/CPU) • Direct audio • RAM-optimized threads\n"
+            "Auto device (CUDA/DirectML/CPU) • Direct audio • RAM-optimized threads\n"
             "Outputs saved next to source file(s)."
         )
-        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=10, columnspan=4, sticky='w', padx=20, pady=(8, 16))
+        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=11, columnspan=4, sticky='w', padx=20, pady=(8, 16))
 
         # Handlers attached to the buttons above
 
@@ -556,6 +590,7 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                         proj_settings["time_header"] = time_header_var.get()
                         proj_settings["quality_mode"] = quality_mode_var.get()
                         proj_settings["max_repeat_cap"] = max_repeat_var.get()
+                        proj_settings["whisper_model"] = model_choice_var.get()
                         _save_project_settings(current_folder, proj_settings)
                         
                     except Exception as e:
@@ -577,6 +612,13 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                         else:
                             os.environ.pop("TRANSCRIBE_QUALITY_MODE", None)
                         os.environ["TRANSCRIBE_MAX_REPEAT_CAP"] = str(max_repeat_var.get())
+                    except Exception:
+                        pass
+
+                    # Apply model selection
+                    try:
+                        selected_model = model_choice_var.get()
+                        os.environ["TRANSCRIBE_MODEL_NAME"] = selected_model
                     except Exception:
                         pass
 
