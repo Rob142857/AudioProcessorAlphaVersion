@@ -367,6 +367,75 @@ def _collapse_repetitions(text: str, max_repeats: int = 3) -> str:
         return text
 
 
+def _refine_capitalization(text: str) -> str:
+    """Fix capitalization artifacts without changing word content.
+    
+    Fixes common Whisper artifacts:
+    - Incorrectly capitalized words mid-sentence
+    - Capital letters immediately after commas (not sentence starts)
+    - Preserves proper nouns and acronyms
+    """
+    try:
+        # Split into sentences while preserving structure
+        sentences = re.split(r'([.!?]+\s+)', text)
+        
+        refined_sentences = []
+        for i, part in enumerate(sentences):
+            # Skip sentence delimiters
+            if re.match(r'^[.!?]+\s+$', part):
+                refined_sentences.append(part)
+                continue
+            
+            # Process each sentence
+            if part.strip():
+                # Fix: Capital letter after comma mid-sentence
+                # Pattern: ", Word" -> ", word" (unless it's a proper noun)
+                part = re.sub(
+                    r',\s+([A-Z])([a-z]+)',
+                    lambda m: f', {m.group(1).lower()}{m.group(2)}' 
+                    if m.group(1) + m.group(2) not in ['I', 'The', 'A', 'An'] 
+                    else m.group(0),
+                    part
+                )
+                
+                # Fix: Mid-sentence capitalization not following punctuation
+                # Split on spaces to check each word
+                words = part.split()
+                if words:
+                    # First word of sentence should be capitalized
+                    if words[0] and words[0][0].islower():
+                        words[0] = words[0][0].upper() + words[0][1:]
+                    
+                    # Check remaining words
+                    for j in range(1, len(words)):
+                        word = words[j]
+                        if not word:
+                            continue
+                        
+                        # Check if previous word ended with sentence-ending punctuation
+                        prev_ends_sentence = j > 0 and words[j-1] and words[j-1][-1] in '.!?'
+                        
+                        # If word is capitalized but not after punctuation
+                        if word[0].isupper() and not prev_ends_sentence:
+                            # Check if it's likely a proper noun (all caps, or starts uppercase and has uppercase later)
+                            is_acronym = word.isupper() and len(word) > 1
+                            has_internal_caps = len(word) > 1 and any(c.isupper() for c in word[1:])
+                            
+                            # Preserve known proper nouns and acronyms
+                            if not (is_acronym or has_internal_caps or word in ['I']):
+                                # Lowercase the first character
+                                words[j] = word[0].lower() + word[1:]
+                    
+                    part = ' '.join(words)
+                
+                refined_sentences.append(part)
+        
+        return ''.join(refined_sentences)
+    except Exception as e:
+        print(f"⚠️  Capitalization refinement failed: {e}")
+        return text
+
+
 def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threads_override: Optional[int] = None):
     """
     Transcribe audio using dataset-based GPU pipeline optimization.
@@ -611,6 +680,10 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         full_text = pm.restore_punctuation(full_text)
         t2 = time.time()
         print(f"✅ Punctuation restoration completed (passes: 2 | {t1 - t0:.1f}s + {t2 - t1:.1f}s)")
+        
+        # Refine capitalization to fix artifacts
+        full_text = _refine_capitalization(full_text)
+        print("✅ Capitalization refinement completed")
     except Exception as e:
         print(f"⚠️  Punctuation restoration failed: {e}")
 
@@ -1809,6 +1882,13 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         print(f"⚠️  Text processing failed: {e}")
         # Last fallback
         formatted_text = full_text
+
+    # Refine capitalization to fix artifacts (applies to all processing paths)
+    try:
+        formatted_text = _refine_capitalization(formatted_text)
+        print("✅ Capitalization refinement completed")
+    except Exception as e:
+        print(f"⚠️  Capitalization refinement failed: {e}")
 
     # Final quality check and validation
     try:
