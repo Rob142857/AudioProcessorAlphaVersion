@@ -665,12 +665,30 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                     verbose=False,  # Reduce verbosity for batch processing
                 )
                 
+                # Model-specific tuning for accuracy
+                if selected_model_name == "large-v3-turbo":
+                    # Turbo-specific: tighter thresholds for better accuracy
+                    seg_kwargs["compression_ratio_threshold"] = 2.2
+                    seg_kwargs["logprob_threshold"] = -1.5
+                    seg_kwargs["no_speech_threshold"] = 0.4
+                    seg_kwargs["hallucination_silence_threshold"] = 2.0
+                elif selected_model_name == "large-v3":
+                    # Large-v3: slightly more permissive for natural speech flow
+                    seg_kwargs["compression_ratio_threshold"] = 2.6
+                    seg_kwargs["logprob_threshold"] = -2.2
+                
                 # Apply quality mode if enabled
                 quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
                 if quality_mode:
-                    seg_kwargs["beam_size"] = 5
-                    seg_kwargs["patience"] = 2.0
-                    print("🎯 Quality mode enabled: beam_size=5, patience=2.0")
+                    if selected_model_name == "large-v3-turbo":
+                        seg_kwargs["beam_size"] = 7
+                        seg_kwargs["patience"] = 2.5
+                        seg_kwargs["best_of"] = 5
+                        print("🎯 Quality mode (turbo): beam_size=7, patience=2.5, best_of=5")
+                    else:
+                        seg_kwargs["beam_size"] = 5
+                        seg_kwargs["patience"] = 2.0
+                        print("🎯 Quality mode (large-v3): beam_size=5, patience=2.0")
                 
                 if initial_prompt:
                     seg_kwargs["initial_prompt"] = initial_prompt
@@ -762,6 +780,12 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     try:
         doc = Document()
         doc.add_heading(f'{base_name}', 0)
+        
+        # Add model and location info
+        parent_folder = os.path.basename(os.path.dirname(input_path))
+        doc.add_paragraph(f'Model: {selected_model_name}')
+        doc.add_paragraph(f'Folder: {parent_folder}')
+        doc.add_paragraph('')
 
         elapsed_total = time.time() - start_time
         if os.environ.get("TRANSCRIBE_HIDE_TIME", "").lower() not in ("1", "true", "yes"):
@@ -778,6 +802,13 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         try:
             doc = Document()
             doc.add_heading(f'Transcription: {base_name}', 0)
+            
+            # Add model and location info (fallback)
+            parent_folder = os.path.basename(os.path.dirname(input_path))
+            doc.add_paragraph(f'Model: {selected_model_name}')
+            doc.add_paragraph(f'Folder: {parent_folder}')
+            doc.add_paragraph('')
+            
             doc.add_paragraph(formatted_text[:5000])
             doc.save(docx_path)
             print(f"✅ Basic Word document saved: {docx_path}")
@@ -1600,12 +1631,35 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 "verbose": True,
             }
             
+            # Model-specific tuning for accuracy
+            if selected_model_name == "large-v3-turbo":
+                # Turbo-specific: tighter thresholds for better accuracy
+                transcribe_kwargs["compression_ratio_threshold"] = 2.2  # Stricter (was 2.4)
+                transcribe_kwargs["logprob_threshold"] = -1.5  # More selective (was -2.0)
+                transcribe_kwargs["no_speech_threshold"] = 0.4  # Better silence detection (was 0.3)
+                transcribe_kwargs["temperature"] = 0.0  # Deterministic for consistency
+                transcribe_kwargs["hallucination_silence_threshold"] = 2.0  # Prevent hallucinations
+                print("🎯 Turbo model: Using accuracy-optimized thresholds")
+            elif selected_model_name == "large-v3":
+                # Large-v3: slightly more permissive for natural speech flow
+                transcribe_kwargs["compression_ratio_threshold"] = 2.6
+                transcribe_kwargs["logprob_threshold"] = -2.2
+                print("🎯 Large-v3 model: Using balanced thresholds")
+            
             # Apply quality mode if enabled
             quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
             if quality_mode:
-                transcribe_kwargs["beam_size"] = 5
-                transcribe_kwargs["patience"] = 2.0
-                print("🎯 Quality mode enabled: beam_size=5, patience=2.0")
+                if selected_model_name == "large-v3-turbo":
+                    # Turbo with quality mode: aggressive beam search for max accuracy
+                    transcribe_kwargs["beam_size"] = 7  # Wider search (was 5)
+                    transcribe_kwargs["patience"] = 2.5  # More patience (was 2.0)
+                    transcribe_kwargs["best_of"] = 5  # Try multiple candidates
+                    print("🎯 Quality mode (turbo): beam_size=7, patience=2.5, best_of=5")
+                else:
+                    # Large-v3 with quality mode: standard beam search
+                    transcribe_kwargs["beam_size"] = 5
+                    transcribe_kwargs["patience"] = 2.0
+                    print("🎯 Quality mode (large-v3): beam_size=5, patience=2.0")
             
             if initial_prompt:
                 transcribe_kwargs["initial_prompt"] = initial_prompt
@@ -1927,6 +1981,13 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     try:
         doc = Document()
         doc.add_heading(f'{base_name}', 0)
+        
+        # Add model and location info
+        parent_folder = os.path.basename(os.path.dirname(input_path))
+        doc.add_paragraph(f'Model: {selected_model_name}')
+        doc.add_paragraph(f'Folder: {parent_folder}')
+        doc.add_paragraph('')
+        
         elapsed_total = time.time() - start_time
         if os.environ.get("TRANSCRIBE_HIDE_TIME", "").lower() not in ("1", "true", "yes"):
             doc.add_paragraph(f'Transcription time: {format_duration_hms(elapsed_total)}')
@@ -1941,6 +2002,13 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         try:
             doc = Document()
             doc.add_heading(f'Transcription: {base_name}', 0)
+            
+            # Add model and location info (fallback)
+            parent_folder = os.path.basename(os.path.dirname(input_path))
+            doc.add_paragraph(f'Model: {selected_model_name}')
+            doc.add_paragraph(f'Folder: {parent_folder}')
+            doc.add_paragraph('')
+            
             doc.add_paragraph(formatted_text[:5000])
             doc.save(docx_path)
             print(f"✅ Basic Word document saved: {docx_path}")
