@@ -9,18 +9,12 @@ Converts audio/video files into professionally formatted text transcripts. Autom
 ## Installation
 
 Run this single command:
-`powershell
+```powershell
 irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install_geforce.ps1 | iex
-`
+```
 
 This installs Python, creates a virtual environment, installs dependencies, downloads models, and launches the GUI.
 
-## Usage
-
-Drag & drop audio/video files into the GUI, or use command line:
-`powershell
-python gui_transcribe.py --input "audio.mp4"
-`
 
 ## Requirements
 
