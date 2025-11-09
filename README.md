@@ -1,4 +1,4 @@
-# AudioProcessor
+# AudioProcessor v1.02beta
 
 High-performance audio and video transcription for Windows x64 using OpenAI Whisper with automatic GPU acceleration.
 
