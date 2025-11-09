@@ -1515,24 +1515,32 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 total_vram_mb = None
             min_mb_for_large = 12000  # conservative for large-v3 / large-v3-turbo
             min_mb_for_medium = 5000
+            force_gpu_override = os.environ.get("TRANSCRIBE_FORCE_GPU", "").strip() in ("1", "true", "True")
             chosen_model = selected_model_name
             cuda_skip = False
             if total_vram_mb is not None:
-                if total_vram_mb < min_mb_for_medium:
-                    # Too small even for medium -> force CPU early
-                    print(f"⚠️  GPU VRAM {total_vram_mb/1024:.1f} GB too small for GPU inference; using CPU")
+                if total_vram_mb < min_mb_for_medium and not force_gpu_override:
+                    # Too small even for medium -> force CPU early (unless override)
+                    print(f"⚠️  GPU VRAM {total_vram_mb/1024:.1f} GB below safe threshold for medium; using CPU (set TRANSCRIBE_FORCE_GPU=1 to override)")
                     chosen_device = "cpu"
                     device_name = f"CPU ({multiprocessing.cpu_count()} cores)"
                     model = whisper.load_model(selected_model_name, device="cpu")
                     cuda_skip = True
+                elif total_vram_mb < min_mb_for_medium and force_gpu_override:
+                    print(f"🚨 Override enabled (TRANSCRIBE_FORCE_GPU=1): attempting GPU load of '{selected_model_name}' despite low VRAM ({total_vram_mb/1024:.1f} GB)")
                 elif total_vram_mb < min_mb_for_large and selected_model_name.startswith("large"):
-                    print(f"⚠️  GPU VRAM {total_vram_mb/1024:.1f} GB insufficient for {selected_model_name}; downgrading to 'medium'")
-                    chosen_model = "medium"
+                    if force_gpu_override:
+                        print(f"🚨 Override enabled: keeping requested large model '{selected_model_name}' on GPU with only {total_vram_mb/1024:.1f} GB VRAM (may OOM)")
+                    else:
+                        print(f"⚠️  GPU VRAM {total_vram_mb/1024:.1f} GB insufficient for {selected_model_name}; downgrading to 'medium' (override with TRANSCRIBE_FORCE_GPU=1)")
+                        chosen_model = "medium"
 
             if not cuda_skip:
                 chosen_device = "cuda"
                 device_name = f"CUDA GPU ({torch_api.cuda.get_device_name(0)})"
                 print("🎯 Device: CUDA GPU (primary)")
+                if force_gpu_override:
+                    print("🔒 VRAM guard overridden by TRANSCRIBE_FORCE_GPU=1")
             # Apply CUDA per-process memory fraction if an allowed VRAM cap is set
             try:
                 total_vram = float(config.get("cuda_total_vram_gb") or 0.0)
