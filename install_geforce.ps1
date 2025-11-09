@@ -54,7 +54,7 @@ if(-not [Environment]::Is64BitOperatingSystem){
   exit 1
 }
 
-Write-Host "`n=== AudioProcessor v1.0.0-beta.1 - GeForce Edition ===" -ForegroundColor Green
+Write-Host "`n=== AudioProcessor v1.02beta - GeForce Edition ===" -ForegroundColor Green
 Write-Host "Optimized installer for NVIDIA GeForce GPUs`n" -ForegroundColor Gray
 
 # Prompt for installation folder (ensures clean install)
@@ -329,7 +329,7 @@ if(-not $SkipModelPreload){
 # Installation complete!
 Write-Host "`n" -NoNewline
 Write-Ok "================================================================"
-Write-Ok "   Installation Complete! AudioProcessor v1.0.0-beta.1"
+Write-Ok "   Installation Complete! AudioProcessor v1.02beta"
 Write-Ok "================================================================"
 
 # Show system info

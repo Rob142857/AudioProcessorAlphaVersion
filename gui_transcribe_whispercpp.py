@@ -1,4 +1,4 @@
-"""Speech to Text Transcription Tool v1.0Beta - WhisperCPP Version
+"""Speech to Text Transcription Tool v1.02beta - WhisperCPP Version
 
 A clean, professional GUI for converting audio and video files to text using WhisperCPP.
 - Turbo v3 model for fast CPU transcription
@@ -176,7 +176,7 @@ def launch_whispercpp_gui(default_outdir: Optional[str] = None):
         return
 
     root = tk.Tk()
-    root.title("Speech to Text Transcription Tool v1.0Beta - WhisperCPP")
+    root.title("Speech to Text Transcription Tool v1.02beta - WhisperCPP")
     root.geometry("800x750")
     root.minsize(700, 650)
     root.resizable(True, True)
@@ -217,7 +217,7 @@ def launch_whispercpp_gui(default_outdir: Optional[str] = None):
     title_label.grid(column=0, row=0, sticky="w")
 
     subtitle_label = ttk.Label(title_frame,
-                              text="v1.0Beta - WhisperCPP Turbo v3 (CPU)",
+                              text="v1.02beta - WhisperCPP Turbo v3 (CPU)",
                               style='Subtitle.TLabel')
     subtitle_label.grid(column=0, row=1, sticky="w", pady=(8, 0))
 
@@ -332,7 +332,7 @@ Full Audio Capture (All Content Preserved)"""
 
     # Add initial welcome message
     log_text.configure(state='normal')
-    log_text.insert('end', "Welcome to Speech to Text Transcription Tool v1.0Beta!\n", "title")
+    log_text.insert('end', "Welcome to Speech to Text Transcription Tool v1.02beta!\n", "title")
     log_text.insert('end', "WhisperCPP Turbo v3 - Fast CPU transcription\n\n")
     log_text.insert('end', "Select an audio or video file and click 'Start Transcription' to begin.\n\n")
     log_text.insert('end', "Tip: This version runs entirely on CPU and is optimized for speed.\n\n")
@@ -464,7 +464,7 @@ Full Audio Capture (All Content Preserved)"""
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Speech to Text Transcription Tool v1.0Beta - WhisperCPP Version")
+    parser = argparse.ArgumentParser(description="Speech to Text Transcription Tool v1.02beta - WhisperCPP Version")
     parser.add_argument("--input", help="input audio/video file OR folder (if provided, runs headless)")
     parser.add_argument("--outdir", help="optional output folder override; defaults to saving next to source file(s)")
     parser.add_argument("--threads", type=int, help="CPU threads to use for WhisperCPP (-t). Overrides auto and env.")
