@@ -1752,13 +1752,43 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                             except Exception:
                                 dual_flag = False
                             if dual_flag and isinstance(chosen_device, str):
-                                # If primary is CUDA and DML also works, create a second model on DML
+                                model_map = []
+                                # Always include primary model first
+                                if chosen_device == "cuda" and model is not None:
+                                    model_map.append((model, "CUDA"))
+                                elif chosen_device == "cpu" and model is not None:
+                                    model_map.append((model, "CPU"))
+
+                                # Try to add a secondary model on a different backend to run hybrid
+                                # Prefer DirectML if available
+                                added_any = False
                                 try:
-                                    # Load secondary model on DirectML using string token
                                     mdl_dml = whisper.load_model(selected_model_name, device="dml")
-                                    model_map = [(model, "CUDA"), (mdl_dml, "DirectML")]
-                                    print("🤝 Dual-device mode: Distributing segments across CUDA and DirectML")
-                                except Exception as _e:
+                                    model_map.append((mdl_dml, "DirectML"))
+                                    added_any = True
+                                except Exception:
+                                    pass
+                                # If primary is CUDA, also add a CPU model for hybrid
+                                if chosen_device == "cuda":
+                                    try:
+                                        mdl_cpu = whisper.load_model(selected_model_name, device="cpu")
+                                        model_map.append((mdl_cpu, "CPU"))
+                                        added_any = True
+                                    except Exception:
+                                        pass
+                                # If primary is CPU and CUDA is available, try adding a CUDA model
+                                if chosen_device == "cpu" and torch_api.cuda.is_available():
+                                    try:
+                                        mdl_cuda = whisper.load_model(selected_model_name, device="cuda")
+                                        model_map.append((mdl_cuda, "CUDA"))
+                                        added_any = True
+                                    except Exception:
+                                        pass
+
+                                if added_any and len(model_map) >= 2:
+                                    labels = ", ".join(lbl for _mdl, lbl in model_map)
+                                    print(f"🤝 Dual-device mode: Distributing segments across {labels}")
+                                else:
                                     model_map = None
                             result = transcribe_with_vad_parallel(working_input_path, vad_segments, model, transcribe_kwargs, config, model_map=model_map)
                             transcription_result = result
@@ -1766,6 +1796,41 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                             transcription_complete = True
                             return  # Exit early since we processed with VAD
                         else:
+                            # If dual-device requested but no VAD segments, synthesize duration-based segments
+                            if dual_flag:
+                                try:
+                                    total = get_media_duration(working_input_path) or 0
+                                    seg_len = 30.0
+                                    synth = []
+                                    cur = 0.0
+                                    while cur < total:
+                                        synth.append((cur, min(cur+seg_len, total)))
+                                        cur += seg_len
+                                    if synth:
+                                        print(f"✂️  Synthesized {len(synth)} duration-based segments for hybrid mode")
+                                        # Build model_map similarly to above
+                                        model_map = []
+                                        if chosen_device == "cuda" and model is not None:
+                                            model_map.append((model, "CUDA"))
+                                            try:
+                                                mdl_cpu = whisper.load_model(selected_model_name, device="cpu")
+                                                model_map.append((mdl_cpu, "CPU"))
+                                            except Exception:
+                                                pass
+                                        elif chosen_device == "cpu" and torch_api.cuda.is_available():
+                                            model_map.append((model, "CPU"))
+                                            try:
+                                                mdl_cuda = whisper.load_model(selected_model_name, device="cuda")
+                                                model_map.append((mdl_cuda, "CUDA"))
+                                            except Exception:
+                                                pass
+                                        result = transcribe_with_vad_parallel(working_input_path, synth, model, transcribe_kwargs, config, model_map=model_map if model_map and len(model_map)>=2 else None)
+                                        transcription_result = result
+                                        print("✅ Hybrid duration-based parallel transcription completed successfully")
+                                        transcription_complete = True
+                                        return
+                                except Exception as _e:
+                                    print(f"⚠️  Could not synthesize segments for hybrid mode: {_e}")
                             print("⚠️  VAD enabled but no segments detected, proceeding without VAD")
                     else:
                         print("⚠️  VAD functions not available, proceeding without VAD")

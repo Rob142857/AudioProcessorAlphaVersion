@@ -606,8 +606,14 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                     try:
                         if max_perf_var.get() == 1:
                             os.environ["TRANSCRIBE_MAX_PERF"] = "1"
+                            # Enable dual-device hybrid (GPU+CPU) and segmentation for best throughput
+                            os.environ["TRANSCRIBE_DUAL_DEVICE"] = "1"
+                            os.environ["TRANSCRIBE_VAD"] = "1"
                         else:
                             os.environ.pop("TRANSCRIBE_MAX_PERF", None)
+                            os.environ.pop("TRANSCRIBE_DUAL_DEVICE", None)
+                            # Don't force VAD if user disables max perf
+                            os.environ.pop("TRANSCRIBE_VAD", None)
                     except Exception:
                         pass
 
