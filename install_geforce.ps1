@@ -310,7 +310,8 @@ if(Test-Command 'ffmpeg'){
 
 # 7) Preload Whisper models (optional)
 if(-not $SkipModelPreload){
-  Write-Info "`n[7/7] Preloading Whisper models (this may take a few minutes)..."
+  Write-Info "`n[7/7] Preloading Whisper models (large-v3 and large-v3-turbo)..."
+  Write-Info "This may take several minutes depending on your connection..."
   $preloadScript = Join-Path $RepoRoot 'preload_models.py'
   if(Test-Path $preloadScript){
     try{
@@ -322,7 +323,7 @@ if(-not $SkipModelPreload){
     Write-Warn "preload_models.py not found, skipping model download"
   }
 } else {
-  Write-Info "`n[7/7] Skipping model preload (will download on first use)"
+  Write-Info "`n[7/7] Skipping model preload (models will download on first use)"
 }
 
 # Installation complete!
