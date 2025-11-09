@@ -93,7 +93,7 @@
       "time_header": 1,
       "quality_mode": 1,
       "max_repeat_cap": 3,
-      "whisper_model": "large-v3-turbo"
+      "whisper_model": "turbo-medium-v3"
     }
   }
 }

@@ -657,6 +657,7 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                     try:
                         selected_model = model_choice_var.get()
                         os.environ["TRANSCRIBE_MODEL_NAME"] = selected_model
+                        q.put(f"Model selected: {selected_model}\n")
                     except Exception:
                         pass
 
