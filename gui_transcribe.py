@@ -1,4 +1,4 @@
-"""Speech to Text Transcription Tool v1.0Beta
+"""Speech to Text Transcription Tool v1.0.0-beta.1
 
 A clean, professional GUI for converting audio and video files to text using AI.
 - Large AI model for professional quality

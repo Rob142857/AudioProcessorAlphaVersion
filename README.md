@@ -1,6 +1,8 @@
-# AudioProcessor Alpha Version
+# AudioProcessor v1.0.0-beta.1
 
 Ultra-high-performance audio and video transcription system for Windows x64 machines, featuring OpenAI Whisper with advanced text processing and intelligent optimization.
+
+> **Latest Update**: v1.0.0-beta.1 - Stable working version with full feature set. One-click x64 GeForce installer coming soon!
 
 ## What It Does
 
@@ -41,13 +43,22 @@ Ultra-high-performance audio and video transcription system for Windows x64 mach
 
 ## Quick Start (Windows x64)
 
-### Requirements
+### One-Click Installation (Coming Soon!)
+**For NVIDIA GeForce Users:**
+```powershell
+# One-click installer with automatic CUDA detection (In Development)
+# Will detect your GeForce GPU and install optimal CUDA version automatically
+```
+
+### Current Installation
 - **Windows 10/11 x64** with Administrator access
 - **8GB+ RAM recommended** (16GB+ for optimal performance)
 - **Internet connection** for initial setup
 - **Optional**: NVIDIA/AMD GPU for acceleration
 
-### Installation
+### Current Installation
+
+#### Requirements
 ```powershell
 # Run this single command (auto-detects GPU/CPU and installs accordingly)
 powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install_new.ps1 | iex"
