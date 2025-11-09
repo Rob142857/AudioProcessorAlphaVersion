@@ -43,11 +43,26 @@ Ultra-high-performance audio and video transcription system for Windows x64 mach
 
 ## Quick Start (Windows x64)
 
-### One-Click Installation (Coming Soon!)
-**For NVIDIA GeForce Users:**
+### One-Click Installation for NVIDIA GeForce GPUs 🎮
+**Streamlined installer with automatic CUDA detection:**
 ```powershell
-# One-click installer with automatic CUDA detection (In Development)
-# Will detect your GeForce GPU and install optimal CUDA version automatically
+irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install_geforce.ps1 | iex
+```
+
+**What it does:**
+- ✅ Auto-detects your GeForce GPU and selects optimal CUDA version
+- ✅ Installs Python 3.11, creates virtual environment
+- ✅ Installs PyTorch with CUDA support (no CUDA Toolkit needed!)
+- ✅ Installs all dependencies (no C++ Build Tools required)
+- ✅ Preloads Whisper models and launches GUI
+- ✅ **No admin rights required** for basic installation
+
+**Local installation options:**
+```powershell
+# Download and run with options
+iwr https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install_geforce.ps1 -OutFile install_geforce.ps1
+powershell -ExecutionPolicy Bypass -File .\install_geforce.ps1 -SkipModelPreload  # Skip model download
+powershell -ExecutionPolicy Bypass -File .\install_geforce.ps1 -SkipGUI           # Don't auto-launch GUI
 ```
 
 ### Current Installation
