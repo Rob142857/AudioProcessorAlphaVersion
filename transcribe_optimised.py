@@ -1452,20 +1452,31 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     
     # Check for model selection from environment variable (set by GUI)
     selected_model_name = os.environ.get("TRANSCRIBE_MODEL_NAME", "large-v3")
+    original_requested_model = selected_model_name
+    # Alias mapping: GUI option 'turbo-medium-v3' -> official 'medium'
+    if selected_model_name == "turbo-medium-v3":
+        print("🔁 Alias detected: 'turbo-medium-v3' -> 'medium' (lower VRAM footprint).")
+        selected_model_name = "medium"
+        os.environ["TRANSCRIBE_INTERNAL_MODEL_NAME"] = selected_model_name
 
-    # Prefer selected model; if it's not listed as available, fall back to the next best
+    # Prefer selected model; if it's not listed as available, fall back to the next best (include medium first)
     try:
         import whisper  # type: ignore
         avail = set(whisper.available_models())
         requested_available = (selected_model_name in avail)
         if not requested_available:
-            print(f"⚠️  Requested model '{selected_model_name}' not available, falling back...")
-            for cand in ("large-v3", "large-v2", "large"):
+            print(f"⚠️  Requested model '{original_requested_model}' not available, evaluating fallbacks...")
+            # Fallback priority: medium (lower VRAM), large-v3-turbo (speed), large-v3 (accuracy), large-v2, large
+            for cand in ("medium", "large-v3-turbo", "large-v3", "large-v2", "large"):
                 if cand in avail:
                     selected_model_name = cand
+                    print(f"🔄 Falling back to '{selected_model_name}'")
                     break
         print(f"🧩 Requested model available: {requested_available}")
-        print(f"🗂️  Selecting model: {selected_model_name}")
+        if original_requested_model != selected_model_name:
+            print(f"🗂️  Selecting model: {selected_model_name} (mapped from '{original_requested_model}')")
+        else:
+            print(f"🗂️  Selecting model: {selected_model_name}")
     except Exception as e:
         print(f"⚠️  Could not query whisper.available_models(): {e}. Proceeding with '{selected_model_name}'.")
 
