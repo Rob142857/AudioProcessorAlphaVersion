@@ -57,7 +57,8 @@
       "skip_existing": 0,
       "time_header": 1,
       "quality_mode": 1,
-      "max_repeat_cap": 3
+      "max_repeat_cap": 3,
+      "whisper_model": "large-v3"
     },
     "C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_PG Completed Recordings 84-97/1996 MW": {
       "domain_terms_file": "c:\\Users\\RobertEvans\\Downloads\\AudioProcessorAlphaVersion\\awkward_words.txt",

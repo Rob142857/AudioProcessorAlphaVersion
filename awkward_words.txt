@@ -4,9 +4,7 @@
 # - Noether
 # - Fourier transform
 
-Schrödinger
-Noether
-Fourier transform
+
 Harnell Aoot
 Stopinders
 Hexadic
@@ -16,29 +14,3 @@ Etherekrilno
 Triamazikamno
 Heptaparaparshinokh
 Zoostat
-
-# Parapsychology and psychic phenomena terms
-telekinesis
-telegnosis
-telepathy
-clairvoyance
-psychokinesis
-extrasensory perception
-parapsychology
-precognition
-retrocognition
-mediumship
-spiritualism
-ectoplasm
-poltergeist
-levitation
-apport
-materialization
-dematerialization
-astral projection
-out-of-body experience
-remote viewing
-psychic
-ESP
-psi
-paranormal
