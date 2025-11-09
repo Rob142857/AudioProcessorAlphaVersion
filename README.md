@@ -1,32 +1,60 @@
-# AudioProcessor v1.0.0-beta.1
+# AudioProcessor# AudioProcessor v1.0.0-beta.1
 
-Ultra-high-performance audio and video transcription system for Windows x64 machines, featuring OpenAI Whisper with advanced text processing and intelligent optimization.
 
-> **Latest Update**: v1.0.0-beta.1 - Stable working version with full feature set. One-click x64 GeForce installer coming soon!
 
-## What It Does
+High-performance audio and video transcription for Windows x64 using OpenAI Whisper with automatic GPU acceleration.Ultra-high-performance audio and video transcription system for Windows x64 machines, featuring OpenAI Whisper with advanced text processing and intelligent optimization.
 
-**AudioProcessor** converts audio and video files into high-quality text documents with professional formatting. It automatically detects your hardware and uses maximum available resources for optimal performance.
 
-### Key Features
 
-🎯 **Ultra-Aggressive Performance**
-- Uses 98% of available RAM and 99% of VRAM for maximum speed
+## What It Does> **Latest Update**: v1.0.0-beta.1 - Stable working version with full feature set. One-click x64 GeForce installer coming soon!
+
+
+
+Converts audio/video files into professionally formatted text transcripts. Automatically detects and utilizes NVIDIA GPUs for 3-5x faster processing, with CPU fallback.## What It Does
+
+
+
+## Installation**AudioProcessor** converts audio and video files into high-quality text documents with professional formatting. It automatically detects your hardware and uses maximum available resources for optimal performance.
+
+
+
+Run this single command:### Key Features
+
+```powershell
+
+irm https://raw.githubusercontent.com/Rob142857/AudioProcessorAlphaVersion/main/install_geforce.ps1 | iex🎯 **Ultra-Aggressive Performance**
+
+```- Uses 98% of available RAM and 99% of VRAM for maximum speed
+
 - Automatic hardware detection (CUDA GPU → DirectML → CPU)
-- Whisper large-v3-turbo model with English optimization
+
+This installs Python, creates a virtual environment, installs dependencies, downloads models, and launches the GUI.- Whisper large-v3-turbo model with English optimization
+
 - Typically processes at 15-40x realtime speed
 
+## Usage
+
 🧠 **Advanced Text Processing**
-- **6-pass text enhancement** with parallel processing across CPU cores
-- **Intelligent punctuation** restoration and capitalization
-- **Context-aware paragraph** formatting with semantic grouping
-- **Quality assessment** and readability optimization
+
+Drag & drop audio/video files into the GUI, or use command line:- **6-pass text enhancement** with parallel processing across CPU cores
+
+```powershell- **Intelligent punctuation** restoration and capitalization
+
+python gui_transcribe.py --input "audio.mp4"- **Context-aware paragraph** formatting with semantic grouping
+
+```- **Quality assessment** and readability optimization
+
 - **Multi-threaded processing** utilizing up to 75% of CPU cores
 
+## Requirements
+
 📄 **Professional Output**
-- Clean, properly formatted transcriptions
-- Outputs both `.txt` and `.docx` files next to source
-- Automatic artifact removal (watermarks, music, etc.)
+
+- Windows 10/11 x64- Clean, properly formatted transcriptions
+
+- 8GB+ RAM (16GB recommended)- Outputs both `.txt` and `.docx` files next to source
+
+- Optional: NVIDIA GPU for acceleration- Automatic artifact removal (watermarks, music, etc.)
 - Enhanced readability with proper sentence structure
 
 ⚡ **Intelligent Optimization**
