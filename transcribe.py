@@ -9,9 +9,30 @@ import tempfile
 import argparse
 import whisper
 import torch
-from docx import Document
-from moviepy import VideoFileClip, AudioFileClip
-import imageio_ffmpeg as iio_ffmpeg
+# Optional: docx export and moviepy utilities
+try:
+    from docx import Document  # type: ignore
+    _docx_available = True
+except Exception:
+    Document = None  # type: ignore
+    _docx_available = False
+    print("ℹ️ python-docx not available; DOCX export will be skipped when using transcribe.py helpers.")
+
+try:
+    from moviepy import VideoFileClip, AudioFileClip  # type: ignore
+    _moviepy_available = True
+except Exception:
+    VideoFileClip = None  # type: ignore
+    AudioFileClip = None  # type: ignore
+    _moviepy_available = False
+    print("ℹ️ moviepy not available; falling back to ffmpeg extraction where needed.")
+
+try:
+    import imageio_ffmpeg as iio_ffmpeg  # type: ignore
+    _iio_ffmpeg_available = True
+except Exception:
+    iio_ffmpeg = None  # type: ignore
+    _iio_ffmpeg_available = False
 from deepmultilingualpunctuation import PunctuationModel
 try:
     import webrtcvad
@@ -297,32 +318,29 @@ def choose_device(preferred: str = "auto"):
 
 def get_media_duration(path):
     """Return media duration in seconds. Try moviepy then ffprobe fallback."""
-    try:
-        ext = os.path.splitext(path)[1].lower()
-        if ext in [".mp4", ".mov", ".mkv", ".avi"]:
-            clip = VideoFileClip(path)
-            try:
-                return float(clip.duration)
-            finally:
-                clip.close()
-        else:
-            clip = AudioFileClip(path)
-            try:
-                return float(clip.duration)
-            finally:
-                clip.close()
-    except Exception:
-        # fallback to ffprobe
-        ff = shutil.which("ffprobe") or shutil.which("ffmpeg")
-        if not ff:
-            return None
-        # use ffprobe if available
+    # Prefer moviepy if available; otherwise use ffprobe directly.
+    if _moviepy_available and (VideoFileClip is not None and AudioFileClip is not None):
         try:
-            cmd = [ff, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path]
-            out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
-            return float(out.decode().strip())
+            ext = os.path.splitext(path)[1].lower()
+            clip = VideoFileClip(path) if ext in {".mp4", ".mov", ".mkv", ".avi"} else AudioFileClip(path)
+            try:
+                return float(getattr(clip, "duration", None) or 0.0)
+            finally:
+                try:
+                    clip.close()
+                except Exception:
+                    pass
         except Exception:
-            return None
+            pass  # fall through to ffprobe
+    ffprobe = shutil.which("ffprobe") or shutil.which("ffmpeg")
+    if not ffprobe:
+        return None
+    try:
+        cmd = [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path]
+        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+        return float(out.decode().strip())
+    except Exception:
+        return None
 
 
 def transcribe_file(input_path, model_name="large", preprocess=True, keep_temp=False, bitrate="192k", device_preference="auto", vad=True, punctuate=True, output_dir=None):

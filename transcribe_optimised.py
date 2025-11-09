@@ -550,6 +550,12 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     
     # Check for model selection from environment variable (set by GUI)
     selected_model_name = os.environ.get("TRANSCRIBE_MODEL_NAME", "large-v3")
+    original_requested_model = selected_model_name
+    # Map GUI alias 'turbo-medium-v3' -> official 'medium' model
+    if selected_model_name == "turbo-medium-v3":
+        print("🔁 Alias detected: 'turbo-medium-v3' will load base 'medium' model for reduced VRAM usage.")
+        selected_model_name = "medium"
+        os.environ["TRANSCRIBE_INTERNAL_MODEL_NAME"] = selected_model_name
 
     try:
         avail = set(whisper.available_models())
@@ -561,7 +567,11 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                     selected_model_name = cand
                     break
         print(f"🧩 Requested model available: {requested_available}")
-        print(f"🗂️  Selecting model: {selected_model_name}")
+        # Clarify alias mapping in log if applied
+        if original_requested_model != selected_model_name:
+            print(f"🗂️  Selecting model: {selected_model_name} (alias for {original_requested_model})")
+        else:
+            print(f"🗂️  Selecting model: {selected_model_name}")
     except Exception as e:
         print(f"⚠️  Could not query whisper.available_models(): {e}")
 
@@ -1094,8 +1104,11 @@ def vad_segment_times_optimized(input_path, aggressiveness=2, frame_duration_ms=
             return [(0.0, 60.0)]
 
 
-def transcribe_with_vad_parallel(input_path, vad_segments, model, base_transcribe_kwargs, config):
-    """Transcribe audio using VAD segments processed in parallel for maximum performance."""
+def transcribe_with_vad_parallel(input_path, vad_segments, model, base_transcribe_kwargs, config, *, model_map=None):
+    """Transcribe audio using VAD segments processed in parallel.
+    If model_map is provided, it should be a list of (model, device_label) and segments will be
+    distributed across these models round-robin to utilize multiple devices.
+    """
     import concurrent.futures
     import tempfile
     import subprocess
@@ -1159,14 +1172,15 @@ def transcribe_with_vad_parallel(input_path, vad_segments, model, base_transcrib
         print(f"✅ Extracted {len(segment_files)} audio segments in perfect temporal order")
 
         # Transcribe segments in parallel
-        def transcribe_segment(segment_path, time_range):
+        def transcribe_segment(segment_path, time_range, model_to_use, device_label: str = ""):
             try:
                 # Create a copy of transcribe kwargs for this segment
                 segment_kwargs = base_transcribe_kwargs.copy()
                 # Remove vad_filter since we're already using segmented audio
                 segment_kwargs.pop("vad_filter", None)
-
-                result = model.transcribe(segment_path, **segment_kwargs)
+                if device_label:
+                    print(f"🖥️  [{device_label}] transcribing {os.path.basename(segment_path)} {time_range[0]:.1f}-{time_range[1]:.1f}s")
+                result = model_to_use.transcribe(segment_path, **segment_kwargs)
 
                 # Add timing information to segments
                 if isinstance(result, dict) and "segments" in result:
@@ -1188,21 +1202,43 @@ def transcribe_with_vad_parallel(input_path, vad_segments, model, base_transcrib
             max_workers = min(len(segment_files), config.get("cpu_threads", 4) // 2)
         max_workers = max(1, min(max_workers, 12))  # Cap at 12 workers for stability
 
-        # SEQUENTIAL TRANSCRIPTION: Process segments one by one for guaranteed order
-        print("🔧 Using sequential transcription processing for perfect order...")
+        # SEQUENTIAL SUBMISSION but allow multi-device round-robin execution
+        print("🔧 Using sequential submission; execution may be parallel across devices...")
         
         segment_results = []
-        for i, (seg_path, time_range) in enumerate(segment_files):
-            print(f"🎯 Processing segment {i + 1}/{len(segment_files)}: {time_range[0]:.1f}s-{time_range[1]:.1f}s")
-            try:
-                result = transcribe_segment(seg_path, time_range)
-                if result:
-                    segment_results.append(result)
-                    print(f"✅ Segment {i + 1} completed successfully")
-                else:
-                    print(f"⚠️  Segment {i + 1} returned empty result")
-            except Exception as e:
-                print(f"❌ Segment {i + 1} failed: {e}")
+        # Prepare pool if multi-device available
+        use_multi = isinstance(model_map, list) and len(model_map) >= 2
+        if use_multi:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(segment_files), 4)) as ex:
+                futures = []
+                for i, (seg_path, time_range) in enumerate(segment_files):
+                    mdl, lbl = model_map[i % len(model_map)]
+                    futures.append((i, time_range, ex.submit(transcribe_segment, seg_path, time_range, mdl, lbl)))
+                # Collect results in index order
+                futures.sort(key=lambda x: x[0])
+                for i, time_range, fut in futures:
+                    try:
+                        result = fut.result()
+                        if result:
+                            segment_results.append(result)
+                            print(f"✅ Segment {i + 1} completed successfully")
+                        else:
+                            print(f"⚠️  Segment {i + 1} returned empty result")
+                    except Exception as e:
+                        print(f"❌ Segment {i + 1} failed: {e}")
+        else:
+            for i, (seg_path, time_range) in enumerate(segment_files):
+                print(f"🎯 Processing segment {i + 1}/{len(segment_files)}: {time_range[0]:.1f}s-{time_range[1]:.1f}s")
+                try:
+                    result = transcribe_segment(seg_path, time_range, model, "single-device")
+                    if result:
+                        segment_results.append(result)
+                        print(f"✅ Segment {i + 1} completed successfully")
+                    else:
+                        print(f"⚠️  Segment {i + 1} returned empty result")
+                except Exception as e:
+                    print(f"❌ Segment {i + 1} failed: {e}")
         
         print(f"📊 Successfully processed {len(segment_results)}/{len(segment_files)} segments in perfect temporal order")
 
@@ -1287,10 +1323,19 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
 
     _ensure_torch_available()
     torch_api = cast(Any, torch)
+    # Track total runtime for reporting
+    start_time = time.time()
 
     # Lazy imports (after torch is imported) to avoid docstring errors
     import whisper  # type: ignore
-    from docx import Document  # type: ignore
+    # Safe/optional docx import
+    try:
+        from docx import Document  # type: ignore
+        _docx_available = True
+    except ImportError:
+        _docx_available = False
+        Document = None  # type: ignore
+        print("ℹ️ python-docx not installed; DOCX export will be skipped. Install with: pip install python-docx")
     try:
         from text_processor_enhanced import create_enhanced_processor
         _enhanced_processor_available = True
@@ -1316,51 +1361,14 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         _vad_functions_available = False
         # Define fallback VAD function
         def vad_segment_times(input_path):
-            """Fallback VAD function when transcribe.py is not available"""
+            """Fallback VAD function when transcribe.py is not available.
+            Returns a single segment spanning the entire media duration.
+            """
             try:
-                from moviepy import AudioFileClip
-                audio_clip = AudioFileClip(input_path)
-                duration = audio_clip.duration
-                audio_clip.close()
-
-                segments = []
-                segment_length = 30.0  # 30 second segments
-                for i in range(0, int(duration), int(segment_length)):
-                    start = float(i)
-                    end = min(float(i + segment_length), duration)
-                    segments.append((start, end))
-
-                print(f"📊 Created {len(segments)} duration-based segments ({segment_length}s each)")
-                return segments
-            except Exception as e:
-                print(f"❌ Error creating fallback segments: {e}")
-                return [(0.0, 60.0)]  # Single segment fallback
-
-    start_time = time.time()
-    print("🚀 MAXIMUM PERFORMANCE AUTO-DETECTED TRANSCRIPTION")
-    print(f"📁 Input: {os.path.basename(input_path)}")
-
-    # Check if speaker identification should be enabled
-    enable_speakers = False
-    try:
-        # Speaker identification is disabled - comment out to re-enable if needed
-        # enable_speakers = os.environ.get("TRANSCRIBE_SPEAKER_ID", "").strip() in ("1", "true", "True")
-        if enable_speakers:
-            print("� Speaker identification enabled")
-    except Exception:
-        enable_speakers = False
-
-    # Check if dataset optimization should be used
-    use_dataset = False
-    try:
-        use_dataset = os.environ.get("TRANSCRIBE_USE_DATASET", "").strip() in ("1", "true", "True")
-        if use_dataset:
-            print("🎯 Dataset optimization enabled for GPU pipeline efficiency")
-    except Exception:
-        use_dataset = False
-
-    # Check if VAD segmentation should be used
-    use_vad = False
+                duration = get_media_duration(input_path)
+                return [(0.0, float(duration or 0.0))]
+            except Exception:
+                return [(0.0, 0.0)]
     try:
         use_vad = os.environ.get("TRANSCRIBE_VAD", "").strip() in ("1", "true", "True")
         if use_vad:
@@ -1473,10 +1481,47 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             except Exception as e:
                 print(f"⚠️  Could not raise process priority: {e}")
 
-        if "cuda" in config["devices"] and torch_api.cuda.is_available():
-            chosen_device = "cuda"
-            device_name = f"CUDA GPU ({torch_api.cuda.get_device_name(0)})"
-            print("🎯 Device: CUDA GPU")
+        # Multi-device detection: prefer CUDA, but if DirectML also available keep a list for potential hybrid splitting
+        available_devices = []
+        if torch_api.cuda.is_available():
+            available_devices.append("cuda")
+        # DirectML check
+        dml_ok = False
+        try:
+            import torch_directml  # type: ignore
+            _dml_test = torch_directml.device()
+            dml_ok = True
+            available_devices.append("dml")
+        except Exception:
+            dml_ok = False
+        print(f"🔍 Detected compute backends: {available_devices or ['cpu']}")
+
+        if "cuda" in available_devices:
+            # Proactive VRAM check for low-memory GPUs
+            try:
+                total_vram_mb = torch_api.cuda.get_device_properties(0).total_memory // (1024*1024)
+            except Exception:
+                total_vram_mb = None
+            min_mb_for_large = 12000  # conservative for large-v3 / large-v3-turbo
+            min_mb_for_medium = 5000
+            chosen_model = selected_model_name
+            cuda_skip = False
+            if total_vram_mb is not None:
+                if total_vram_mb < min_mb_for_medium:
+                    # Too small even for medium -> force CPU early
+                    print(f"⚠️  GPU VRAM {total_vram_mb/1024:.1f} GB too small for GPU inference; using CPU")
+                    chosen_device = "cpu"
+                    device_name = f"CPU ({multiprocessing.cpu_count()} cores)"
+                    model = whisper.load_model(selected_model_name, device="cpu")
+                    cuda_skip = True
+                elif total_vram_mb < min_mb_for_large and selected_model_name.startswith("large"):
+                    print(f"⚠️  GPU VRAM {total_vram_mb/1024:.1f} GB insufficient for {selected_model_name}; downgrading to 'medium'")
+                    chosen_model = "medium"
+
+            if not cuda_skip:
+                chosen_device = "cuda"
+                device_name = f"CUDA GPU ({torch_api.cuda.get_device_name(0)})"
+                print("🎯 Device: CUDA GPU (primary)")
             # Apply CUDA per-process memory fraction if an allowed VRAM cap is set
             try:
                 total_vram = float(config.get("cuda_total_vram_gb") or 0.0)
@@ -1521,17 +1566,21 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     pass
             except Exception:
                 pass
-            model = whisper.load_model(selected_model_name, device="cuda")
-        elif config.get("dml_available", False):
+                # Use allocator settings suitable for low VRAM
+                try:
+                    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:16")
+                except Exception:
+                    pass
+                model = whisper.load_model(chosen_model, device="cuda")
+        elif dml_ok:
             try:
-                import torch_directml  # type: ignore
-                dml_device = torch_directml.device()
-                chosen_device = dml_device
+                # Use string token for whisper to avoid type comparisons inside backends
+                chosen_device = "dml"
                 device_name = "DirectML GPU"
-                print("🎯 Device: DirectML GPU")
-                model = whisper.load_model(selected_model_name, device=dml_device)
+                print("🎯 Device: DirectML GPU (primary; CUDA unavailable)")
+                model = whisper.load_model(selected_model_name, device="dml")
             except Exception as e:
-                print(f"⚠️  DirectML unavailable, falling back to CPU: {e}")
+                print(f"⚠️  DirectML initialization failed, falling back to CPU: {e}")
                 model = None
         if model is None:
             chosen_device = "cpu"
@@ -1677,7 +1726,22 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                             print(f"🎯 VAD detected {len(vad_segments)} speech segments - processing in parallel")
                             print("💡 If transcript beginnings are missing, set 'disable_vad': True in config")
                             # Use actual VAD segmentation with parallel processing
-                            result = transcribe_with_vad_parallel(working_input_path, vad_segments, model, transcribe_kwargs, config)
+                            # If both CUDA and DirectML are available and enabled via env, build a model map
+                            model_map = None
+                            try:
+                                dual_flag = os.environ.get("TRANSCRIBE_DUAL_DEVICE", "").lower() in ("1", "true", "yes")
+                            except Exception:
+                                dual_flag = False
+                            if dual_flag and isinstance(chosen_device, str):
+                                # If primary is CUDA and DML also works, create a second model on DML
+                                try:
+                                    # Load secondary model on DirectML using string token
+                                    mdl_dml = whisper.load_model(selected_model_name, device="dml")
+                                    model_map = [(model, "CUDA"), (mdl_dml, "DirectML")]
+                                    print("🤝 Dual-device mode: Distributing segments across CUDA and DirectML")
+                                except Exception as _e:
+                                    model_map = None
+                            result = transcribe_with_vad_parallel(working_input_path, vad_segments, model, transcribe_kwargs, config, model_map=model_map)
                             transcription_result = result
                             print("✅ VAD parallel transcription completed successfully")
                             transcription_complete = True
@@ -1978,43 +2042,40 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         txt_path = None
 
     # Save DOCX with fallback
-    try:
-        doc = Document()
-        doc.add_heading(f'{base_name}', 0)
-        
-        # Add model and location info
-        parent_folder = os.path.basename(os.path.dirname(input_path))
-        doc.add_paragraph(f'Model: {selected_model_name}')
-        doc.add_paragraph(f'Folder: {parent_folder}')
-        doc.add_paragraph('')
-        
-        elapsed_total = time.time() - start_time
-        if os.environ.get("TRANSCRIBE_HIDE_TIME", "").lower() not in ("1", "true", "yes"):
-            doc.add_paragraph(f'Transcription time: {format_duration_hms(elapsed_total)}')
-            doc.add_paragraph('')
-        for para in formatted_text.split("\n\n"):
-            if para.strip():
-                doc.add_paragraph(para.strip())
-        doc.save(docx_path)
-        print(f"✅ Word document saved: {docx_path}")
-    except Exception as e:
-        print(f"❌ Failed to create Word document: {e}")
+    if _docx_available:
         try:
             doc = Document()
-            doc.add_heading(f'Transcription: {base_name}', 0)
-            
-            # Add model and location info (fallback)
+            doc.add_heading(f'{base_name}', 0)
             parent_folder = os.path.basename(os.path.dirname(input_path))
             doc.add_paragraph(f'Model: {selected_model_name}')
             doc.add_paragraph(f'Folder: {parent_folder}')
             doc.add_paragraph('')
-            
-            doc.add_paragraph(formatted_text[:5000])
+            elapsed_total = time.time() - start_time
+            if os.environ.get("TRANSCRIBE_HIDE_TIME", "").lower() not in ("1", "true", "yes"):
+                doc.add_paragraph(f'Transcription time: {format_duration_hms(elapsed_total)}')
+                doc.add_paragraph('')
+            for para in formatted_text.split("\n\n"):
+                if para.strip():
+                    doc.add_paragraph(para.strip())
             doc.save(docx_path)
-            print(f"✅ Basic Word document saved: {docx_path}")
-        except Exception as e2:
-            print(f"❌ Failed to save even basic Word document: {e2}")
-            docx_path = None
+            print(f"✅ Word document saved: {docx_path}")
+        except Exception as e:
+            print(f"❌ Failed to create Word document: {e}")
+            try:
+                doc = Document()
+                doc.add_heading(f'Transcription: {base_name}', 0)
+                parent_folder = os.path.basename(os.path.dirname(input_path))
+                doc.add_paragraph(f'Model: {selected_model_name}')
+                doc.add_paragraph(f'Folder: {parent_folder}')
+                doc.add_paragraph('')
+                doc.add_paragraph(formatted_text[:5000])
+                doc.save(docx_path)
+                print(f"✅ Basic Word document saved: {docx_path}")
+            except Exception as e2:
+                    print(f"❌ Failed to save even basic Word document: {e2}")
+                    docx_path = None
+    else:
+        print("ℹ️ Skipping DOCX export (python-docx not available). Only .txt output generated.")
 
     # Final stats
     elapsed = time.time() - start_time

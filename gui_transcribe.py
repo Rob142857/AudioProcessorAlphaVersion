@@ -34,6 +34,30 @@ DEFAULT_DOWNLOADS = os.path.normpath(os.path.join(os.path.expanduser("~"), "Down
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(REPO_ROOT, ".transcribe_settings.json")
 
+# Runtime diagnostic & environment checks
+def _assert_runtime_environment():
+    """Print interpreter and virtual environment info; warn if not using local .venv.
+    Also pre-check availability of python-docx so user gets early feedback instead of a late crash.
+    """
+    exe = sys.executable
+    venv = os.environ.get("VIRTUAL_ENV")
+    print(f"🔧 Interpreter: {exe}")
+    if venv:
+        print(f"🔧 Virtual env: {venv}")
+    else:
+        print("⚠ No VIRTUAL_ENV detected (may be system Python).")
+    # Heuristic: ensure we're inside project .venv
+    if not exe.lower().endswith(".venv\\scripts\\python.exe"):
+        print("⚠ Warning: It appears you're not using the project's .venv. Activate with: .\\.venv\\Scripts\\Activate.ps1")
+    # Early docx availability check
+    try:
+        import docx  # noqa: F401
+        os.environ.setdefault("TRANSCRIBE_DOCX_ENABLED", "1")
+        print("✅ python-docx available; DOCX export enabled.")
+    except ImportError:
+        os.environ["TRANSCRIBE_DOCX_ENABLED"] = "0"
+        print("⚠ python-docx not installed; DOCX export will be skipped. Install with: pip install python-docx")
+
 def _load_settings() -> dict:
     try:
         with open(SETTINGS_PATH, 'r', encoding='utf-8') as f:
@@ -458,8 +482,10 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         max_repeat_var = tk.IntVar(value=proj_settings.get("max_repeat_cap", 3))
         tk.Spinbox(combined_frame, from_=1, to=10, textvariable=max_repeat_var, width=5, bg='#f9fafb', fg='#111827', relief='flat').grid(column=3, row=9, sticky='w', padx=(6, 20), pady=(0, 6))
 
-        # Row 9b: Model selection (large-v3-turbo vs large-v3)
+        # Row 9b: Model selection (large-v3-turbo vs large-v3 vs turbo-medium-v3 alias)
         tk.Label(combined_frame, text="Whisper Model:", bg='white', fg='#374151', font=('Segoe UI', 10, 'bold')).grid(column=0, row=10, sticky='w', padx=20, pady=(8, 6))
+        # New third option: "turbo-medium-v3" (internal alias that maps to base 'medium' model for lower VRAM usage but faster startup)
+        # Persist selection in project settings; default remains large-v3-turbo for speed unless previously saved.
         model_choice_var = tk.StringVar(value=proj_settings.get("whisper_model", "large-v3-turbo"))  # Default to turbo for speed
         
         model_frame = tk.Frame(combined_frame, bg='white')
@@ -475,7 +501,7 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
             selectcolor='white', 
             activebackground='white',
             font=('Segoe UI', 9)
-        ).pack(side='left', padx=(0, 20))
+        ).pack(side='left', padx=(0, 18))
         
         tk.Radiobutton(
             model_frame, 
@@ -485,6 +511,18 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
             bg='white', 
             fg='#374151', 
             selectcolor='white', 
+            activebackground='white',
+            font=('Segoe UI', 9)
+        ).pack(side='left', padx=(0, 18))
+
+        tk.Radiobutton(
+            model_frame,
+            text="turbo-medium-v3 (lower VRAM, fast alias)",
+            variable=model_choice_var,
+            value="turbo-medium-v3",
+            bg='white',
+            fg='#374151',
+            selectcolor='white',
             activebackground='white',
             font=('Segoe UI', 9)
         ).pack(side='left')
@@ -759,7 +797,9 @@ def main():
 
     # Launch GUI in detached process
     try:
-        subprocess.run(["cmd", "/c", "start", "python", __file__, "--gui"], 
+        # Use the current interpreter to avoid falling back to system Python
+        # On Windows, "start" expects a window title argument (empty string acceptable)
+        subprocess.run(["cmd", "/c", "start", "", sys.executable, __file__, "--gui"], 
                       creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
         print("GUI launched in background. You can now use the terminal for other commands.")
     except Exception as e:
@@ -769,4 +809,6 @@ def main():
 
 
 if __name__ == "__main__":
+    # Show environment diagnostics before proceeding
+    _assert_runtime_environment()
     main()
