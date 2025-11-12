@@ -740,16 +740,20 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(process_segment, seg) for seg in all_batch_segments]
             
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            completed_count = 0
+            for future in concurrent.futures.as_completed(futures):
                 try:
                     segments = future.result()
                     all_segments.extend(segments)
-                    segment_count += 1
+                    completed_count += 1
                     
-                    if segment_count % 10 == 0:
-                        print(f"📊 Processed {segment_count}/{len(all_batch_segments)} segments...")
+                    if completed_count % 10 == 0:
+                        print(f"📊 Completed {completed_count}/{len(all_batch_segments)} segments (parallel - will sort by timestamp)...")
                 except Exception as e:
                     print(f"⚠️  Future completion error: {e}")
+            
+            segment_count = len(all_batch_segments)
+            print(f"✅ Parallel GPU processing complete: {completed_count} segments (order will be corrected)")
     
     else:
         # CPU fallback: sequential processing
