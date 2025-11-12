@@ -243,7 +243,7 @@ def create_efficient_dataloader(audio_path: str, batch_size: int = 4, num_worker
     return dataloader
 
 
-# --- Awkward words support (prompt biasing) ---------------------------------
+# --- Special words support (prompt biasing) ---------------------------------
 def _read_lines(path: str) -> list:
     try:
         with open(path, 'r', encoding='utf-8') as f:
@@ -258,8 +258,8 @@ def load_awkward_terms(input_path: str) -> list:
     Priority:
       1) TRANSCRIBE_AWKWARD_TERMS env (comma-separated)
       2) TRANSCRIBE_AWKWARD_FILE env (path to .txt/.md)
-      3) awkward_words.txt / awkward_words.md in the input file's folder
-      4) awkward_words.txt / awkward_words.md in the repo root (this module's dir)
+      3) special_words.txt / special_words.md in the input file's folder
+      4) special_words.txt / special_words.md in the repo root (this module's dir)
     """
     terms = []
     try:
@@ -278,7 +278,7 @@ def load_awkward_terms(input_path: str) -> list:
 
         # 3) Local folder files
         in_dir = os.path.dirname(input_path)
-        for fname in ('awkward_words.txt', 'awkward_words.md'):
+        for fname in ('special_words.txt', 'special_words.md'):
             p = os.path.join(in_dir, fname)
             if os.path.isfile(p):
                 terms.extend(_read_lines(p))
@@ -286,7 +286,7 @@ def load_awkward_terms(input_path: str) -> list:
 
         # 4) Repo root
         repo_dir = os.path.dirname(__file__)
-        for fname in ('awkward_words.txt', 'awkward_words.md'):
+        for fname in ('special_words.txt', 'special_words.md'):
             p = os.path.join(repo_dir, fname)
             if os.path.isfile(p):
                 terms.extend(_read_lines(p))
@@ -622,7 +622,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     print(f"   • Device: {device_name}")
     print(f"   • Model: {selected_model_name}")
 
-    # Build optional initial_prompt from awkward terms
+    # Build optional initial_prompt from special terms
     awkward_terms = load_awkward_terms(input_path)
     initial_prompt = build_initial_prompt(awkward_terms)
 
