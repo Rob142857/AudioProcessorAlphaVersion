@@ -14,6 +14,7 @@ import gc
 import psutil
 import argparse
 import multiprocessing
+import threading
 from typing import Any, cast, Optional, Dict
 
 # IMPORTANT: Import torch once at module import time. Do NOT delete torch.* from sys.modules.
@@ -498,7 +499,9 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     )
 
     start_time = time.time()
-    print("🚀 DATASET-OPTIMIZED TRANSCRIPTION WITH GPU PIPELINE EFFICIENCY")
+    print("\n" + "="*80)
+    print("🚀 GPU-ACCELERATED TRANSCRIPTION")
+    print("="*80)
     print(f"📁 Input: {os.path.basename(input_path)}")
 
     # Preprocess audio with silence padding to prevent missed words
@@ -506,28 +509,11 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     preprocessing_used = preprocessed_path != input_path
     
     if preprocessing_used:
-        print(f"✅ Using preprocessed audio with silence padding")
+        print(f"✅ Preprocessed with silence padding (prevents missed words)")
         # Use the preprocessed file for all subsequent operations
         working_input_path = preprocessed_path
     else:
-        print(f"🔄 Using original audio file")
         working_input_path = input_path
-
-    # Check file size to determine if dataset optimization is beneficial
-    try:
-        file_size = os.path.getsize(working_input_path)
-        if file_size < 50 * 1024 * 1024:  # Less than 50MB
-            print("📊 File size < 50MB - falling back to standard processing for optimal performance")
-            # Clean up preprocessed file before returning
-            try:
-                if preprocessing_used and os.path.exists(working_input_path):
-                    os.remove(working_input_path)
-                    print("🧹 Removed temporary preprocessed audio file")
-            except Exception:
-                pass
-            return transcribe_file_simple_auto(input_path, output_dir, threads_override=threads_override)
-    except Exception:
-        pass
 
     # Get hardware config
     max_perf = os.environ.get("TRANSCRIBE_MAX_PERF", "").strip() in ("1", "true", "True")
@@ -560,9 +546,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                 if cand in avail:
                     selected_model_name = cand
                     break
-        print(f"🧩 Requested model available: {requested_available}")
-        print(f"🗂️  Selecting model: {selected_model_name}")
-        print(f"🎯 Model Source: Environment variable TRANSCRIBE_MODEL_NAME = '{os.environ.get('TRANSCRIBE_MODEL_NAME', 'NOT SET')}'")
+        print(f"🎯 Model: {selected_model_name}")
     except Exception as e:
         print(f"⚠️  Could not query whisper.available_models(): {e}")
 
@@ -571,7 +555,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         if "cuda" in config["devices"] and torch_api.cuda.is_available():
             chosen_device = "cuda"
             device_name = f"CUDA GPU ({torch_api.cuda.get_device_name(0)})"
-            print("🎯 Device: CUDA GPU with dataset optimization")
+            print(f"🎯 Device: {device_name}")
 
             # Enable GPU optimizations
             if hasattr(torch_api.backends, "cudnn"):
@@ -586,20 +570,18 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             except Exception:
                 pass
 
-            # Load model in FP16 for maximum GPU performance
+            # Load model for GPU
             model = whisper.load_model(selected_model_name, device="cuda")
-            # Move model to FP16 for 2x faster inference on GPU
-            try:
-                model = model.half()
-                print(f"🚀 Model '{selected_model_name}' converted to FP16 (half precision) for maximum GPU speed")
-                print(f"💡 Expected speed improvement: 2-3x faster inference vs FP32")
-            except Exception as fp16_err:
-                print(f"⚠️  Could not convert to FP16: {fp16_err} - using FP32")
+            # Note: FP16 conversion currently disabled due to dtype compatibility issues
+            # Will use FP32 for stability
+            model_is_fp16 = False
+            print(f"✅ Model loaded in FP32 (stable for parallel processing)")
         else:
             chosen_device = "cpu"
             device_name = f"CPU ({multiprocessing.cpu_count()} cores)"
             print(f"🎯 Device: {device_name}")
             model = whisper.load_model(selected_model_name, device="cpu")
+            model_is_fp16 = False  # CPU doesn't use FP16
     except Exception as e:
         print(f"❌ Model load failed: {e}")
         raise
@@ -615,6 +597,8 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     except Exception:
         pass
 
+    print(f"⚙️  Threads: {config['cpu_threads']} CPU, {interop} interop")
+
     # Explicit thread configuration logging
     print(f"🔧 Thread Configuration:")
     print(f"   • CPU Threads: {config['cpu_threads']}")
@@ -628,18 +612,20 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
 
     # Create dataset and dataloader for efficient processing
     try:
-        # Increase batch size for CUDA to maximize GPU throughput
-        batch_size = 8 if chosen_device == "cuda" else 1  # Increased from 4 to 8 for better GPU utilization
+        # Use batch_size=1 in DataLoader since we handle parallelism with ThreadPoolExecutor
+        # This avoids tensor batching complications
+        batch_size_dataloader = 1  # DataLoader batching disabled - we do parallel processing manually
         # Increase worker threads for better data pipeline
-        num_workers = min(4, config["cpu_threads"] // 2) if config["cpu_threads"] > 4 else 0  # Increased from 2 to 4
+        num_workers = min(4, config["cpu_threads"] // 2) if config["cpu_threads"] > 4 else 0
 
         dataloader = create_efficient_dataloader(
             working_input_path,
-            batch_size=batch_size,
+            batch_size=batch_size_dataloader,
             num_workers=num_workers
         )
 
-        print(f"📊 Dataset created with {len(dataloader.dataset)} segments, batch_size={batch_size}, workers={num_workers}")
+        print(f"📊 Dataset: {len(dataloader.dataset)} segments")
+        print("")  # Blank line for readability
 
     except Exception as e:
         print(f"⚠️  Dataset creation failed: {e} - falling back to standard processing")
@@ -656,7 +642,8 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     all_segments = []
     segment_count = 0
 
-    print("🔄 Processing audio segments with GPU pipeline optimization...")
+    print("🔄 Transcribing audio...")
+    print("─" * 80)
     
     # Configure transcription parameters once
     seg_kwargs = dict(
@@ -688,41 +675,64 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             seg_kwargs["beam_size"] = 7
             seg_kwargs["patience"] = 2.5
             seg_kwargs["best_of"] = 5
-            print("🎯 Quality mode (turbo): beam_size=7, patience=2.5, best_of=5")
         else:
             seg_kwargs["beam_size"] = 5
             seg_kwargs["patience"] = 2.0
-            print("🎯 Quality mode (large-v3): beam_size=5, patience=2.0")
     
     if initial_prompt:
         seg_kwargs["initial_prompt"] = initial_prompt
+    
+    # Add FP16 flag if model was converted to half precision
+    if chosen_device == "cuda" and model_is_fp16:
+        seg_kwargs["fp16"] = True
 
     # Process in true batches for better GPU utilization
     if chosen_device == "cuda":
-        print("🚀 Using parallel batch inference for maximum GPU utilization")
         import concurrent.futures
         
         # Collect all segments first for parallel processing
         all_batch_segments = []
         for batch in dataloader:
-            for segment_data in batch:
-                segment_audio = segment_data['audio'].numpy() if hasattr(segment_data['audio'], 'numpy') else segment_data['audio']
-                all_batch_segments.append({
-                    'audio': segment_audio,
-                    'start_time': segment_data['start_time'],
-                    'end_time': segment_data['end_time']
-                })
+            # With batch_size=1, batch is a dict with single items (possibly tensors)
+            # Extract the values - they might be tensors or lists of length 1
+            audio = batch['audio']
+            start_time = batch['start_time']
+            end_time = batch['end_time']
+            
+            # Handle tensor/list wrapping from DataLoader
+            if hasattr(audio, '__getitem__') and not isinstance(audio, np.ndarray):
+                # It's a batched tensor or list - extract first element
+                audio = audio[0] if len(audio) > 0 else audio
+                start_time = start_time[0] if hasattr(start_time, '__getitem__') else start_time
+                end_time = end_time[0] if hasattr(end_time, '__getitem__') else end_time
+            
+            # Convert to numpy if needed
+            segment_audio = audio.numpy() if hasattr(audio, 'numpy') else audio
+            
+            all_batch_segments.append({
+                'audio': segment_audio,
+                'start_time': float(start_time),
+                'end_time': float(end_time)
+            })
         
-        print(f"📦 Prepared {len(all_batch_segments)} segments for parallel GPU processing")
+        # Process segments with thread-safe model access
+        
+        # Create a lock to prevent concurrent model access (prevents tensor dimension mismatches)
+        model_lock = threading.Lock()
         
         # Process multiple segments in parallel using ThreadPoolExecutor
-        # This allows GPU to work on multiple decode operations concurrently
+        # Lock ensures model.transcribe() is called sequentially while still benefiting from
+        # async I/O, preprocessing, and postprocessing parallelization
         max_workers = min(4, len(all_batch_segments))  # Up to 4 parallel transcriptions
         
         def process_segment(seg_data):
             """Process a single segment and return adjusted timestamps"""
             try:
-                result = model.transcribe(seg_data['audio'], **seg_kwargs)
+                # Use lock to ensure only one thread accesses the model at a time
+                # This prevents race conditions in the attention mechanism
+                with model_lock:
+                    result = model.transcribe(seg_data['audio'], **seg_kwargs)
+                
                 processed_segs = []
                 
                 if isinstance(result, dict) and "segments" in result:
@@ -731,6 +741,11 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                         seg_copy["start"] = seg_data['start_time'] + seg.get("start", 0)
                         seg_copy["end"] = seg_data['start_time'] + seg.get("end", 0)
                         processed_segs.append(seg_copy)
+                        
+                        # Print transcribed text as we go (shows progress)
+                        text = seg.get("text", "").strip()
+                        if text:
+                            print(f"   {text}")
                 
                 return processed_segs
             except Exception as e:
@@ -753,7 +768,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                     print(f"⚠️  Future completion error: {e}")
             
             segment_count = len(all_batch_segments)
-            print(f"✅ Parallel GPU processing complete: {completed_count} segments (order will be corrected)")
+            print(f"\n✅ Transcription complete: {completed_count} segments")
     
     else:
         # CPU fallback: sequential processing
@@ -780,13 +795,11 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             except Exception as e:
                 print(f"⚠️  Batch processing error: {e} - continuing with next batch")
 
-    print(f"✅ Dataset processing complete: {len(all_segments)} total segments")
+    print("─" * 80)
 
     # ROBUST SORTING: Critical for parallel processing where segments may complete out of order
     # Sort by start time (primary) and end time (secondary) to ensure correct chronological order
     if all_segments:
-        print(f"🔄 Sorting {len(all_segments)} segments by timestamp (critical for parallel processing)...")
-        
         # Multi-key sort: start time first, then end time for segments starting at same time
         all_segments.sort(key=lambda x: (x.get("start", 0), x.get("end", 0)))
         
@@ -798,8 +811,6 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             # Log warning if segments are significantly out of order (gap > 5 seconds backwards)
             if curr_start < prev_end - 5.0:
                 print(f"⚠️  Warning: Segment {i} may overlap (prev ends at {prev_end:.2f}s, current starts at {curr_start:.2f}s)")
-        
-        print(f"✅ Segments sorted chronologically: {all_segments[0].get('start', 0):.2f}s → {all_segments[-1].get('end', 0):.2f}s")
 
     # Combine results
     full_text = ""
@@ -1614,13 +1625,11 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 pass
             # Load model in FP16 for maximum GPU performance
             model = whisper.load_model(selected_model_name, device="cuda")
-            # Move model to FP16 for 2x faster inference on GPU
-            try:
-                model = model.half()
-                print(f"🚀 Model '{selected_model_name}' converted to FP16 (half precision) for 2-3x faster GPU inference")
-                print(f"💡 FP16 uses half the VRAM and provides 2-3x speedup on modern GPUs")
-            except Exception as fp16_err:
-                print(f"⚠️  Could not convert to FP16: {fp16_err} - using FP32 (slower)")
+            # Note: FP16 conversion disabled for parallel processing to prevent tensor dimension mismatches
+            # The parallel ThreadPoolExecutor causes race conditions in attention mechanisms with FP16
+            # FP32 is more stable for concurrent multi-threaded inference
+            print(f"🎯 Model '{selected_model_name}' loaded in FP32 for stable parallel GPU processing")
+            print(f"💡 FP32 prevents tensor dimension errors during concurrent inference")
         elif config.get("dml_available", False):
             try:
                 import torch_directml  # type: ignore
