@@ -562,6 +562,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                     break
         print(f"🧩 Requested model available: {requested_available}")
         print(f"🗂️  Selecting model: {selected_model_name}")
+        print(f"🎯 Model Source: Environment variable TRANSCRIBE_MODEL_NAME = '{os.environ.get('TRANSCRIBE_MODEL_NAME', 'NOT SET')}'")
     except Exception as e:
         print(f"⚠️  Could not query whisper.available_models(): {e}")
 
@@ -590,7 +591,8 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             # Move model to FP16 for 2x faster inference on GPU
             try:
                 model = model.half()
-                print("🚀 Model converted to FP16 (half precision) for maximum GPU speed")
+                print(f"🚀 Model '{selected_model_name}' converted to FP16 (half precision) for maximum GPU speed")
+                print(f"💡 Expected speed improvement: 2-3x faster inference vs FP32")
             except Exception as fp16_err:
                 print(f"⚠️  Could not convert to FP16: {fp16_err} - using FP32")
         else:
@@ -1467,6 +1469,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     break
         print(f"🧩 Requested model available: {requested_available}")
         print(f"🗂️  Selecting model: {selected_model_name}")
+        print(f"🎯 Model Source: Environment variable TRANSCRIBE_MODEL_NAME = '{os.environ.get('TRANSCRIBE_MODEL_NAME', 'NOT SET')}'")
     except Exception as e:
         print(f"⚠️  Could not query whisper.available_models(): {e}. Proceeding with '{selected_model_name}'.")
 
@@ -1535,7 +1538,8 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             # Move model to FP16 for 2x faster inference on GPU
             try:
                 model = model.half()
-                print("🚀 Model converted to FP16 (half precision) for 2-3x faster GPU inference")
+                print(f"🚀 Model '{selected_model_name}' converted to FP16 (half precision) for 2-3x faster GPU inference")
+                print(f"💡 FP16 uses half the VRAM and provides 2-3x speedup on modern GPUs")
             except Exception as fp16_err:
                 print(f"⚠️  Could not convert to FP16: {fp16_err} - using FP32 (slower)")
         elif config.get("dml_available", False):
