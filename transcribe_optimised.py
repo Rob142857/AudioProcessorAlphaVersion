@@ -657,76 +657,149 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     segment_count = 0
 
     print("🔄 Processing audio segments with GPU pipeline optimization...")
+    
+    # Configure transcription parameters once
+    seg_kwargs = dict(
+        language="en",  # Optimized for English language
+        compression_ratio_threshold=2.4,
+        logprob_threshold=-2.0,
+        no_speech_threshold=0.3,
+        condition_on_previous_text=True,  # Enable context from previous segments
+        temperature=0.0,
+        verbose=False,  # Reduce verbosity for batch processing
+    )
+    
+    # Model-specific tuning for accuracy
+    if selected_model_name == "large-v3-turbo":
+        # Turbo-specific: tighter thresholds for better accuracy
+        seg_kwargs["compression_ratio_threshold"] = 2.2
+        seg_kwargs["logprob_threshold"] = -1.5
+        seg_kwargs["no_speech_threshold"] = 0.4
+        seg_kwargs["hallucination_silence_threshold"] = 2.0
+    elif selected_model_name == "large-v3":
+        # Large-v3: slightly more permissive for natural speech flow
+        seg_kwargs["compression_ratio_threshold"] = 2.6
+        seg_kwargs["logprob_threshold"] = -2.2
+    
+    # Apply quality mode if enabled
+    quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
+    if quality_mode:
+        if selected_model_name == "large-v3-turbo":
+            seg_kwargs["beam_size"] = 7
+            seg_kwargs["patience"] = 2.5
+            seg_kwargs["best_of"] = 5
+            print("🎯 Quality mode (turbo): beam_size=7, patience=2.5, best_of=5")
+        else:
+            seg_kwargs["beam_size"] = 5
+            seg_kwargs["patience"] = 2.0
+            print("🎯 Quality mode (large-v3): beam_size=5, patience=2.0")
+    
+    if initial_prompt:
+        seg_kwargs["initial_prompt"] = initial_prompt
 
-    for batch in dataloader:
-        try:
+    # Process in true batches for better GPU utilization
+    if chosen_device == "cuda":
+        print("🚀 Using parallel batch inference for maximum GPU utilization")
+        import concurrent.futures
+        
+        # Collect all segments first for parallel processing
+        all_batch_segments = []
+        for batch in dataloader:
             for segment_data in batch:
                 segment_audio = segment_data['audio'].numpy() if hasattr(segment_data['audio'], 'numpy') else segment_data['audio']
-                start_time_seg = segment_data['start_time']
-                end_time_seg = segment_data['end_time']
-
-                # Transcribe this segment
-                seg_kwargs = dict(
-                    language="en",  # Optimized for English language
-                    compression_ratio_threshold=2.4,
-                    logprob_threshold=-2.0,
-                    no_speech_threshold=0.3,
-                    condition_on_previous_text=True,  # Enable context from previous segments
-                    temperature=0.0,
-                    verbose=False,  # Reduce verbosity for batch processing
-                )
+                all_batch_segments.append({
+                    'audio': segment_audio,
+                    'start_time': segment_data['start_time'],
+                    'end_time': segment_data['end_time']
+                })
+        
+        print(f"📦 Prepared {len(all_batch_segments)} segments for parallel GPU processing")
+        
+        # Process multiple segments in parallel using ThreadPoolExecutor
+        # This allows GPU to work on multiple decode operations concurrently
+        max_workers = min(4, len(all_batch_segments))  # Up to 4 parallel transcriptions
+        
+        def process_segment(seg_data):
+            """Process a single segment and return adjusted timestamps"""
+            try:
+                result = model.transcribe(seg_data['audio'], **seg_kwargs)
+                processed_segs = []
                 
-                # Model-specific tuning for accuracy
-                if selected_model_name == "large-v3-turbo":
-                    # Turbo-specific: tighter thresholds for better accuracy
-                    seg_kwargs["compression_ratio_threshold"] = 2.2
-                    seg_kwargs["logprob_threshold"] = -1.5
-                    seg_kwargs["no_speech_threshold"] = 0.4
-                    seg_kwargs["hallucination_silence_threshold"] = 2.0
-                elif selected_model_name == "large-v3":
-                    # Large-v3: slightly more permissive for natural speech flow
-                    seg_kwargs["compression_ratio_threshold"] = 2.6
-                    seg_kwargs["logprob_threshold"] = -2.2
-                
-                # Apply quality mode if enabled
-                quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
-                if quality_mode:
-                    if selected_model_name == "large-v3-turbo":
-                        seg_kwargs["beam_size"] = 7
-                        seg_kwargs["patience"] = 2.5
-                        seg_kwargs["best_of"] = 5
-                        print("🎯 Quality mode (turbo): beam_size=7, patience=2.5, best_of=5")
-                    else:
-                        seg_kwargs["beam_size"] = 5
-                        seg_kwargs["patience"] = 2.0
-                        print("🎯 Quality mode (large-v3): beam_size=5, patience=2.0")
-                
-                if initial_prompt:
-                    seg_kwargs["initial_prompt"] = initial_prompt
-                result = model.transcribe(segment_audio, **seg_kwargs)
-
                 if isinstance(result, dict) and "segments" in result:
                     for seg in result["segments"]:
-                        # Adjust timestamps to global timeline
                         seg_copy = dict(seg)
-                        seg_copy["start"] = start_time_seg + seg.get("start", 0)
-                        seg_copy["end"] = start_time_seg + seg.get("end", 0)
-                        all_segments.append(seg_copy)
+                        seg_copy["start"] = seg_data['start_time'] + seg.get("start", 0)
+                        seg_copy["end"] = seg_data['start_time'] + seg.get("end", 0)
+                        processed_segs.append(seg_copy)
+                
+                return processed_segs
+            except Exception as e:
+                print(f"⚠️  Segment processing error: {e}")
+                return []
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(process_segment, seg) for seg in all_batch_segments]
+            
+            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+                try:
+                    segments = future.result()
+                    all_segments.extend(segments)
+                    segment_count += 1
+                    
+                    if segment_count % 10 == 0:
+                        print(f"📊 Processed {segment_count}/{len(all_batch_segments)} segments...")
+                except Exception as e:
+                    print(f"⚠️  Future completion error: {e}")
+    
+    else:
+        # CPU fallback: sequential processing
+        print("🔄 Using sequential processing for CPU")
+        for batch in dataloader:
+            try:
+                for segment_data in batch:
+                    segment_audio = segment_data['audio'].numpy() if hasattr(segment_data['audio'], 'numpy') else segment_data['audio']
+                    start_time_seg = segment_data['start_time']
+                    
+                    result = model.transcribe(segment_audio, **seg_kwargs)
 
-                segment_count += 1
-                if segment_count % 10 == 0:
-                    print(f"📊 Processed {segment_count} segments...")
+                    if isinstance(result, dict) and "segments" in result:
+                        for seg in result["segments"]:
+                            seg_copy = dict(seg)
+                            seg_copy["start"] = start_time_seg + seg.get("start", 0)
+                            seg_copy["end"] = start_time_seg + seg.get("end", 0)
+                            all_segments.append(seg_copy)
 
-        except Exception as e:
-            print(f"⚠️  Batch processing error: {e} - continuing with next batch")
+                    segment_count += 1
+                    if segment_count % 10 == 0:
+                        print(f"📊 Processed {segment_count} segments...")
+
+            except Exception as e:
+                print(f"⚠️  Batch processing error: {e} - continuing with next batch")
 
     print(f"✅ Dataset processing complete: {len(all_segments)} total segments")
+
+    # ROBUST SORTING: Critical for parallel processing where segments may complete out of order
+    # Sort by start time (primary) and end time (secondary) to ensure correct chronological order
+    if all_segments:
+        print(f"🔄 Sorting {len(all_segments)} segments by timestamp (critical for parallel processing)...")
+        
+        # Multi-key sort: start time first, then end time for segments starting at same time
+        all_segments.sort(key=lambda x: (x.get("start", 0), x.get("end", 0)))
+        
+        # Validation: Check for overlaps or out-of-order segments
+        for i in range(1, len(all_segments)):
+            prev_end = all_segments[i-1].get("end", 0)
+            curr_start = all_segments[i].get("start", 0)
+            
+            # Log warning if segments are significantly out of order (gap > 5 seconds backwards)
+            if curr_start < prev_end - 5.0:
+                print(f"⚠️  Warning: Segment {i} may overlap (prev ends at {prev_end:.2f}s, current starts at {curr_start:.2f}s)")
+        
+        print(f"✅ Segments sorted chronologically: {all_segments[0].get('start', 0):.2f}s → {all_segments[-1].get('end', 0):.2f}s")
 
     # Combine results
     full_text = ""
     if all_segments:
-        # Sort segments by start time
-        all_segments.sort(key=lambda x: x.get("start", 0))
 
         # Extract and combine text
         texts = []
