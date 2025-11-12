@@ -577,7 +577,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                 torch_api.backends.cudnn.benchmark = True
             if hasattr(torch_api.backends, "cuda") and hasattr(torch_api.backends.cuda, "matmul"):
                 try:
-                    torch_api.backends.cuda.matmul.allow_tf32 = True
+                    torch_api.backends.cudnn.matmul.allow_tf32 = True
                 except Exception:
                     pass
             try:
@@ -585,7 +585,14 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             except Exception:
                 pass
 
+            # Load model in FP16 for maximum GPU performance
             model = whisper.load_model(selected_model_name, device="cuda")
+            # Move model to FP16 for 2x faster inference on GPU
+            try:
+                model = model.half()
+                print("🚀 Model converted to FP16 (half precision) for maximum GPU speed")
+            except Exception as fp16_err:
+                print(f"⚠️  Could not convert to FP16: {fp16_err} - using FP32")
         else:
             chosen_device = "cpu"
             device_name = f"CPU ({multiprocessing.cpu_count()} cores)"
@@ -619,8 +626,10 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
 
     # Create dataset and dataloader for efficient processing
     try:
-        batch_size = 4 if chosen_device == "cuda" else 1
-        num_workers = min(2, config["cpu_threads"] // 2) if config["cpu_threads"] > 2 else 0
+        # Increase batch size for CUDA to maximize GPU throughput
+        batch_size = 8 if chosen_device == "cuda" else 1  # Increased from 4 to 8 for better GPU utilization
+        # Increase worker threads for better data pipeline
+        num_workers = min(4, config["cpu_threads"] // 2) if config["cpu_threads"] > 4 else 0  # Increased from 2 to 4
 
         dataloader = create_efficient_dataloader(
             working_input_path,
@@ -1521,7 +1530,14 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     pass
             except Exception:
                 pass
+            # Load model in FP16 for maximum GPU performance
             model = whisper.load_model(selected_model_name, device="cuda")
+            # Move model to FP16 for 2x faster inference on GPU
+            try:
+                model = model.half()
+                print("🚀 Model converted to FP16 (half precision) for 2-3x faster GPU inference")
+            except Exception as fp16_err:
+                print(f"⚠️  Could not convert to FP16: {fp16_err} - using FP32 (slower)")
         elif config.get("dml_available", False):
             try:
                 import torch_directml  # type: ignore
@@ -1583,6 +1599,12 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         os.environ.setdefault("MKL_DYNAMIC", "TRUE")  # Dynamic thread adjustment
         os.environ.setdefault("OMP_DYNAMIC", "TRUE")  # Dynamic thread adjustment
         os.environ.setdefault("NUMEXPR_MAX_THREADS", str(min(config["cpu_threads"], 16)))  # NumPy/SciPy threading
+        
+        # Enable aggressive CPU utilization
+        os.environ.setdefault("OMP_WAIT_POLICY", "ACTIVE")  # Keep threads active (don't sleep)
+        os.environ.setdefault("OMP_PROC_BIND", "TRUE")  # Bind threads to cores
+        os.environ.setdefault("KMP_BLOCKTIME", "0")  # Immediate response (Intel specific)
+        os.environ.setdefault("KMP_AFFINITY", "granularity=fine,compact,1,0")  # Core affinity
         
         # Text processing specific threading
         text_threads = max(2, min(8, config["cpu_threads"] // 2))
