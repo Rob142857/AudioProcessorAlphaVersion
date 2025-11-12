@@ -195,8 +195,6 @@ class AudioTranscriptionDataset(Dataset):
 
                 start_sample += step_samples
 
-            print(f"📊 Created {len(self.segments)} audio segments for efficient GPU processing")
-
         except Exception as e:
             print(f"⚠️  Failed to create audio segments: {e}")
             # Fallback: treat entire file as single segment
@@ -599,13 +597,6 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
 
     print(f"⚙️  Threads: {config['cpu_threads']} CPU, {interop} interop")
 
-    # Explicit thread configuration logging
-    print(f"🔧 Thread Configuration:")
-    print(f"   • CPU Threads: {config['cpu_threads']}")
-    print(f"   • Interop Threads: {interop}")
-    print(f"   • Device: {device_name}")
-    print(f"   • Model: {selected_model_name}")
-
     # Build optional initial_prompt from special terms
     awkward_terms = load_awkward_terms(input_path)
     initial_prompt = build_initial_prompt(awkward_terms)
@@ -743,8 +734,9 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                         processed_segs.append(seg_copy)
                         
                         # Print transcribed text as we go (shows progress)
+                        # Filter out prompt text artifacts (sometimes Whisper includes the prompt as transcription)
                         text = seg.get("text", "").strip()
-                        if text:
+                        if text and not text.startswith("Maintain capitalization"):
                             print(f"   {text}")
                 
                 return processed_segs
@@ -955,7 +947,7 @@ def get_maximum_hardware_config(max_perf: bool = False):
     vm = psutil.virtual_memory()
     total_ram_gb = vm.total / (1024 ** 3)
     available_ram_gb = vm.available / (1024 ** 3)
-    # Default: plan to use 98% of currently available RAM (ULTRA AGGRESSIVE)
+    # Default: plan to use 98% of currently available RAM (ULTRA OPTIMISED)
     usable_ram_gb = max(available_ram_gb * 0.98, 1.0)
     # RAM overrides via env: prefer absolute GB then fraction
     try:
@@ -1013,13 +1005,12 @@ def get_maximum_hardware_config(max_perf: bool = False):
     if env_threads > 0:
         cpu_threads = max(1, min(64, env_threads))
 
-    # For ULTRA aggressive utilization, use more GPU workers for maximum utilization
+    # For ULTRA optimised utilization, use more GPU workers for maximum utilization
     if has_cuda:
         try:
             gpu_count = torch_api.cuda.device_count()
             # Use more workers to take advantage of additional GPU shared memory
             gpu_workers = min(gpu_count * 3, 8)  # Increased from 6 to 8 max, 3x GPU count
-            print(f"🎯 GPU Workers: {gpu_workers} (ULTRA AGGRESSIVE - utilizing {15}GB+ shared memory)")
         except Exception:
             gpu_workers = 3  # Increased fallback from 2 to 3
     else:
@@ -1280,7 +1271,7 @@ def transcribe_with_vad_parallel(input_path, vad_segments, model, base_transcrib
 
         # Transcribe all segments in parallel with enhanced CPU utilization
         if config.get('max_perf'):
-            # Ultra aggressive: use up to 75% of CPU cores for VAD parallel processing
+            # Ultra optimised: use up to 75% of CPU cores for VAD parallel processing
             max_workers = min(len(segment_files), max(1, int(config.get("cpu_threads", 4) * 0.75)))
         else:
             # Conservative: use up to 50% of CPU cores
@@ -1436,8 +1427,6 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 return [(0.0, 60.0)]  # Single segment fallback
 
     start_time = time.time()
-    print("🚀 MAXIMUM PERFORMANCE AUTO-DETECTED TRANSCRIPTION")
-    print(f"📁 Input: {os.path.basename(input_path)}")
 
     # Check if speaker identification should be enabled
     enable_speakers = False
@@ -1456,8 +1445,6 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         if env_dataset in ("0", "false", "False"):
             use_dataset = False
             print("⚠️  Dataset optimization manually disabled via TRANSCRIBE_USE_DATASET=0")
-        elif use_dataset:
-            print("🎯 Dataset optimization enabled (default) for GPU pipeline efficiency and parallel processing")
     except Exception:
         use_dataset = True
 
@@ -1473,7 +1460,6 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     # Use dataset optimization (parallel GPU processing) for all files when enabled
     if use_dataset:
         try:
-            print("📊 Using parallel GPU processing with dataset optimization")
             return transcribe_with_dataset_optimization(input_path, output_dir, threads_override)
         except Exception as e:
             print(f"⚠️  Dataset optimization failed: {e} - falling back to standard processing")
@@ -1503,10 +1489,10 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     # Report planning
     try:
         if config.get('max_perf'):
-            print(f"🧠 Planning: ULTRA MAX PERF -> CPU threads {config['cpu_threads']} of {config['cpu_cores']} (ULTRA AGGRESSIVE)")
+            print(f"🧠 Planning: ULTRA MAX PERF -> CPU threads {config['cpu_threads']} of {config['cpu_cores']} (ULTRA OPTIMISED)")
         else:
             print(f"🧠 Planning: CPU threads ≈95% cores -> {config['cpu_threads']} of {config['cpu_cores']} (OPTIMIZED)")
-        print(f"💾 RAM plan: using up to ~{config['usable_ram_gb']:.1f} GB (98% of {config['available_ram_gb']:.1f} GB available - ULTRA AGGRESSIVE)")
+        print(f"💾 RAM plan: using up to ~{config['usable_ram_gb']:.1f} GB (98% of {config['available_ram_gb']:.1f} GB available - ULTRA OPTIMISED)")
         if float(config.get('allowed_vram_gb') or 0) > 0:
             print(f"🎛️ VRAM cap: ~{float(config['allowed_vram_gb']):.1f} GB of total {float(config.get('cuda_total_vram_gb') or 0):.1f} GB (99% utilization)")
             print(f"🔗 GPU Shared Memory: Utilizing additional 15GB+ for parallel processing")
@@ -1589,10 +1575,10 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                         torch_api.cuda.set_per_process_memory_fraction(frac, device=0)
                         print(f"🧩 Limiting CUDA allocator to ~{frac*100:.0f}% of VRAM ({allowed_vram:.1f}GB)")
                     elif config.get('max_perf'):
-                        # Default to ULTRA aggressive allocator in max perf mode - USE MAX VRAM
+                        # Default to ULTRA optimised allocator in max perf mode - USE MAX VRAM
                         try:
                             torch_api.cuda.set_per_process_memory_fraction(0.99, device=0)  # Increased from 0.98 to 0.99
-                            print("🧩 Allowing CUDA allocator to use ~99% of VRAM (ULTRA AGGRESSIVE - MAX PERF)")
+                            print("🧩 Allowing CUDA allocator to use ~99% of VRAM (ULTRA OPTIMISED - MAX PERF)")
                         except Exception:
                             pass
             except Exception as e:
@@ -1667,7 +1653,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     
     # Calculate interop threads with enhanced settings
     if config.get('max_perf'):
-        interop = max(4, min(24, config["cpu_threads"] // 2))  # More aggressive interop
+        interop = max(4, min(24, config["cpu_threads"] // 2))  # More optimised interop
     else:
         interop = max(2, min(16, config["cpu_threads"] // 4))
     
@@ -1692,7 +1678,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         os.environ.setdefault("OMP_DYNAMIC", "TRUE")  # Dynamic thread adjustment
         os.environ.setdefault("NUMEXPR_MAX_THREADS", str(min(config["cpu_threads"], 16)))  # NumPy/SciPy threading
         
-        # Enable aggressive CPU utilization
+        # Enable optimised CPU utilization
         os.environ.setdefault("OMP_WAIT_POLICY", "ACTIVE")  # Keep threads active (don't sleep)
         os.environ.setdefault("OMP_PROC_BIND", "TRUE")  # Bind threads to cores
         os.environ.setdefault("KMP_BLOCKTIME", "0")  # Immediate response (Intel specific)
@@ -1764,7 +1750,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
             if quality_mode:
                 if selected_model_name == "large-v3-turbo":
-                    # Turbo with quality mode: aggressive beam search for max accuracy
+                    # Turbo with quality mode: optimised beam search for max accuracy
                     transcribe_kwargs["beam_size"] = 7  # Wider search (was 5)
                     transcribe_kwargs["patience"] = 2.5  # More patience (was 2.0)
                     transcribe_kwargs["best_of"] = 5  # Try multiple candidates

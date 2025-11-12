@@ -133,10 +133,6 @@ def run_transcription(input_file: str, outdir: Optional[str], output_queue: queu
         # Get model name from environment variable (set by GUI)
         model_name = os.environ.get("TRANSCRIBE_MODEL_NAME", "large-v3")
 
-        output_queue.put("Starting transcription for: {}\n".format(os.path.basename(input_file)))
-        output_queue.put("Using Whisper {} (auto device selection)\n".format(model_name))
-        output_queue.put("Direct processing, maximum threads\n")
-
         out_txt = transcribe_file_simple_auto(
             input_file,
             output_dir=target_outdir,
@@ -435,7 +431,7 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
 
         # Row 5: Max performance mode
         max_perf_var = tk.IntVar(value=1)
-        tk.Checkbutton(combined_frame, text="Maximise performance (use all cores, high priority, aggressive VRAM)", variable=max_perf_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=5, columnspan=4, sticky='w', padx=20, pady=(0, 8))
+        tk.Checkbutton(combined_frame, text="Maximise performance (use all cores, high priority, optimised VRAM)", variable=max_perf_var, bg='white', fg='#374151', selectcolor='white', activebackground='white').grid(column=0, row=5, columnspan=4, sticky='w', padx=20, pady=(0, 8))
 
         # Row 6: Batch options
         recursive_var = tk.IntVar(value=proj_settings.get("recursive", 0))
