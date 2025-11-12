@@ -62,7 +62,7 @@ def _save_project_settings(folder_path: str, proj_settings: dict) -> None:
     _save_settings(all_settings)
 
 def _repo_default_terms_file() -> Optional[str]:
-    for name in ("awkward_words.txt", "awkward_words.md"):
+    for name in ("special_words.txt", "special_words.md"):
         p = os.path.join(REPO_ROOT, name)
         if os.path.exists(p):
             return p
