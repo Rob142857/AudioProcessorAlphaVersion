@@ -1438,14 +1438,17 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     except Exception:
         enable_speakers = False
 
-    # Check if dataset optimization should be used
-    use_dataset = False
+    # Check if dataset optimization should be used - DEFAULT TO TRUE for GPU systems
+    use_dataset = True  # Default to dataset optimization for better GPU utilization
     try:
-        use_dataset = os.environ.get("TRANSCRIBE_USE_DATASET", "").strip() in ("1", "true", "True")
-        if use_dataset:
-            print("🎯 Dataset optimization enabled for GPU pipeline efficiency")
+        env_dataset = os.environ.get("TRANSCRIBE_USE_DATASET", "").strip()
+        if env_dataset in ("0", "false", "False"):
+            use_dataset = False
+            print("⚠️  Dataset optimization manually disabled via TRANSCRIBE_USE_DATASET=0")
+        elif use_dataset:
+            print("🎯 Dataset optimization enabled (default) for GPU pipeline efficiency and parallel processing")
     except Exception:
-        use_dataset = False
+        use_dataset = True
 
     # Check if VAD segmentation should be used
     use_vad = False
@@ -1455,16 +1458,15 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             print("🎯 VAD segmentation enabled for performance optimization")
     except Exception:
         use_vad = False
+    
+    # Use dataset optimization (parallel GPU processing) for all files when enabled
     if use_dataset:
         try:
-            file_size = os.path.getsize(input_path)
-            if file_size > 50 * 1024 * 1024:  # 50MB threshold
-                print("📊 Large file detected - using dataset optimization")
-                return transcribe_with_dataset_optimization(input_path, output_dir, threads_override)
-            else:
-                print("📊 File size < 50MB - using standard processing")
+            print("📊 Using parallel GPU processing with dataset optimization")
+            return transcribe_with_dataset_optimization(input_path, output_dir, threads_override)
         except Exception as e:
-            print(f"⚠️  Dataset check failed: {e} - using standard processing")
+            print(f"⚠️  Dataset optimization failed: {e} - falling back to standard processing")
+            use_dataset = False
 
     # Decide max performance mode from env - DEFAULT TO MAX PERF FOR BETTER CPU UTILIZATION
     max_perf = True  # Default to maximum performance for better CPU utilization
