@@ -1022,9 +1022,10 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     seg_kwargs = dict(
         language="en",  # Optimized for English language
         compression_ratio_threshold=2.4,
-        logprob_threshold=-2.0,
+        logprob_threshold=-1.0,
         no_speech_threshold=0.3,
-        condition_on_previous_text=True,  # Enable context from previous segments
+        # Disable conditioning to prevent repetition loops between segments
+        condition_on_previous_text=False,
         temperature=0.0,
         verbose=False,  # Reduce verbosity for batch processing
     )
@@ -1051,7 +1052,8 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             seg_kwargs["beam_size"] = 5
             seg_kwargs["patience"] = 2.0
     
-    if initial_prompt:
+    # Only allow domain bias when explicitly enabled
+    if initial_prompt and str(os.environ.get("TRANSCRIBE_ALLOW_PROMPT", "0")).lower() in ("1","true","yes"):
         seg_kwargs["initial_prompt"] = initial_prompt
     
     # Add FP16 flag if model was converted to half precision
@@ -2038,11 +2040,13 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                         print(f"🧩 Limiting CUDA allocator to ~{frac*100:.0f}% of VRAM ({allowed_vram:.1f}GB)")
                     elif config.get('max_perf'):
                         # Leave a safety margin unless explicitly overridden
-                        high_frac = os.environ.get("TRANSCRIBE_GPU_FRACTION", "0.92")
+                        # Adjust default for low-VRAM GPUs with large models
+                        default_frac = "0.85" if total_vram <= 8 and selected_model_name in ["large-v3", "large-v3-turbo"] else "0.92"
+                        high_frac = os.environ.get("TRANSCRIBE_GPU_FRACTION", default_frac)
                         try:
                             frac_val = float(high_frac)
                         except Exception:
-                            frac_val = 0.92
+                            frac_val = float(default_frac)
                         try:
                             torch_api.cuda.set_per_process_memory_fraction(min(0.99, max(0.5, frac_val)), device=0)
                             print(f"🧩 Allowing CUDA allocator to use ~{min(0.99, max(0.5, frac_val))*100:.0f}% of VRAM (safety margin enabled)")
@@ -2087,6 +2091,10 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 # Provide sane defaults with expandable segments unless user overrides
                 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:64"
             backend = os.environ.get("TRANSCRIBE_BACKEND", "native").lower()
+            # Auto-switch to faster-whisper for large models on low-VRAM GPUs
+            if backend == "native" and total_vram <= 8 and selected_model_name in ["large-v3", "large-v3-turbo"]:
+                backend = "faster-whisper"
+                print(f"🎯 Auto-switching to faster-whisper backend for {selected_model_name} on {total_vram:.1f}GB GPU")
             using_fw = False
             if backend == "faster-whisper":
                 try:
@@ -2095,7 +2103,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     print(f"⚠️  faster-whisper import failed ({fw_imp_e}); falling back to native backend")
                     backend = "native"
             if backend == "faster-whisper":
-                pref_raw = os.environ.get("TRANSCRIBE_FW_COMPUTE_TYPES", "float16,int8_float16,int8")
+                pref_raw = os.environ.get("TRANSCRIBE_FW_COMPUTE_TYPES", "auto,int8,float16")
                 compute_order = [c.strip() for c in pref_raw.split(',') if c.strip()]
                 load_success = False
                 for idx, ctype in enumerate(compute_order, start=1):
@@ -2125,10 +2133,16 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     {"fp16": False, "adjust_fraction": None},
                     {"fp16": True, "adjust_fraction": 0.90},
                     {"fp16": True, "adjust_fraction": 0.85},
+                    {"fp16": True, "adjust_fraction": 0.80},
+                    {"fp16": True, "adjust_fraction": 0.75},
+                    {"fp16": True, "adjust_fraction": 0.70},
                 ] if not force_fp16_env else [
                     {"fp16": True, "adjust_fraction": None},
                     {"fp16": True, "adjust_fraction": 0.90},
                     {"fp16": True, "adjust_fraction": 0.85},
+                    {"fp16": True, "adjust_fraction": 0.80},
+                    {"fp16": True, "adjust_fraction": 0.75},
+                    {"fp16": True, "adjust_fraction": 0.70},
                 ]
                 load_success = False
                 for idx, att in enumerate(attempts, start=1):
@@ -2281,11 +2295,12 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             # Apply VAD segmentation if enabled
             transcribe_kwargs = {
                 "language": "en",  # Optimized for English language
-                # Use conservative defaults; let Whisper's internal fallback handle edge cases
+                # Conservative thresholds with mild rejection of low-confidence / compressed gibberish
                 "compression_ratio_threshold": 2.4,
-                "logprob_threshold": None,   # default
-                "no_speech_threshold": 0.5,  # more conservative silence handling
-                "condition_on_previous_text": True,  # keep context within a single call
+                "logprob_threshold": -0.5,
+                "no_speech_threshold": 0.4,
+                # Disable cross-segment conditioning to prevent repetition loops
+                "condition_on_previous_text": False,
                 "temperature": 0.0,
                 # Note: temperature_increment_on_fallback not supported in some Whisper builds
                 "verbose": False,
@@ -2293,17 +2308,14 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             
             # Model-specific tuning for accuracy
             if selected_model_name == "large-v3-turbo":
-                # Turbo-specific: tighter thresholds for better accuracy
+                # Turbo-specific: slightly stricter compression ratio, same logprob guard
                 transcribe_kwargs["compression_ratio_threshold"] = 2.2
-                transcribe_kwargs["logprob_threshold"] = None
                 transcribe_kwargs["no_speech_threshold"] = 0.4
-                transcribe_kwargs["temperature"] = 0.0
-                print("🎯 Turbo model: Using accuracy-optimized thresholds")
+                print("🎯 Turbo model: repetition-guard thresholds applied")
             elif selected_model_name == "large-v3":
-                # Large-v3: slightly more permissive for natural speech flow
+                # Large-v3: allow a bit more compression ratio, keep logprob guard
                 transcribe_kwargs["compression_ratio_threshold"] = 2.6
-                transcribe_kwargs["logprob_threshold"] = None
-                print("🎯 Large-v3 model: Using balanced thresholds")
+                print("🎯 Large-v3 model: repetition-guard thresholds applied")
             
             # Apply quality mode if enabled
             quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
@@ -2322,17 +2334,19 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             
             # Tune defaults when using faster-whisper to avoid over-pruning
             if using_fw:
-                # Greedy and permissive capture for initial pass
+                # Greedy capture but still apply repetition guard by disabling conditioning
                 transcribe_kwargs["beam_size"] = 1
                 transcribe_kwargs.pop("patience", None)
                 transcribe_kwargs["best_of"] = 1
-                transcribe_kwargs["no_speech_threshold"] = 0.2
+                transcribe_kwargs["no_speech_threshold"] = 0.25
+                # Keep compression ratio guard off to avoid over-pruning empty results for FW
                 transcribe_kwargs["compression_ratio_threshold"] = None
                 transcribe_kwargs["vad_filter"] = False
                 transcribe_kwargs["chunk_length"] = 30
-                print("🎯 FW tuning: greedy decode, low no_speech_threshold=0.2, chunk_length=30")
+                print("🎯 FW tuning: greedy decode, repetition guard (no conditioning), chunk_length=30")
             
-            if initial_prompt:
+            # Gate initial prompt behind explicit opt-in to preserve strict verbatim neutrality
+            if initial_prompt and str(os.environ.get("TRANSCRIBE_ALLOW_PROMPT", "0")).lower() in ("1","true","yes"):
                 transcribe_kwargs["initial_prompt"] = initial_prompt
 
             if use_vad:
