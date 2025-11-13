@@ -5,6 +5,7 @@ re-importing torch and aggressively clearing only model-level caches between run
 """
 import warnings
 import re
+import json
 warnings.filterwarnings("ignore", category=UserWarning, module="webrtcvad")
 
 import os
@@ -366,6 +367,195 @@ def _collapse_repetitions(text: str, max_repeats: int = 3) -> str:
         return text
 
 
+def _remove_prompt_artifacts(text: str) -> str:
+    """Remove prompt text artifacts that sometimes appear in transcriptions.
+    
+    Whisper can accidentally transcribe the initial_prompt as actual speech,
+    especially phrases like "Maintain capitalization" which appear in our prompts.
+    This function aggressively removes these artifacts.
+    """
+    try:
+        # Phrases to completely remove (case-insensitive)
+        artifact_phrases = [
+            r'Maintain capitalization[,\s]*',
+            r'maintain capitalization[,\s]*',
+            r'Maintain capitalization or overuse these terms[,\.\s]*',
+            r'Do not force, repeat, or overuse these terms[,\.\s]*',
+            r'otherwise ignore them[,\.\s]*',
+        ]
+        
+        # Remove each artifact phrase globally
+        for phrase_pattern in artifact_phrases:
+            text = re.sub(phrase_pattern, '', text, flags=re.IGNORECASE)
+        
+        # Clean up multiple spaces, commas, and periods left behind
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r',\s*,+', ',', text)
+        text = re.sub(r'\.\s*\.+', '.', text)
+        text = re.sub(r'^\s*[,\.]+\s*', '', text)  # Remove leading punctuation
+        
+        # Clean up paragraphs that became empty or whitespace-only
+        lines = text.split('\n')
+        lines = [line.strip() for line in lines if line.strip() and not re.match(r'^[,\.\s]+$', line.strip())]
+        text = '\n'.join(lines)
+        
+        return text.strip()
+    except Exception:
+        return text
+
+
+def _collapse_sentence_repetitions(text: str, max_repeats: int = 3) -> str:
+    """Collapse full-sentence repetitions like 'It was a lie.' repeated many times.
+
+    Runs after punctuation/capitalization so sentences end with .?!
+    Keeps up to `max_repeats` identical consecutive sentences.
+    """
+    try:
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        out = []
+        last = None
+        count = 0
+        for s in sentences:
+            s = s.strip()
+            if not s:
+                continue
+            if s == last:
+                count += 1
+                if count <= max_repeats:
+                    out.append(s)
+            else:
+                last = s
+                count = 1
+                out.append(s)
+        return ' '.join(out)
+    except Exception:
+        return text
+
+
+# --- Extended artifact & repetition mitigation (new) -------------------------
+_ARTIFACT_DROP_LINE_PATTERNS = [
+    r"subtitles by the ",  # YouTube subtitles watermark
+    r"copyright .* all rights reserved",  # generic copyright blocks
+    r"mooji media ltd",  # known stray source watermark
+]
+
+_ARTIFACT_INLINE_PATTERNS = [
+    r"repeat or overuse these terms",
+    r"as written",
+    r"if and only if these domain terms are clearly spoken.*?maintain capitalization",
+    r"do not force, repeat, or overuse these terms",
+    r"maintain capitalization",
+    # Common subtitle/watermark leftovers (case-insensitive, tolerant of punctuation)
+    r"\bsubtitles?\s+by\s+the\s+amara\.?org\s+community\b[:\-]?",
+    r"\bamara\.?org\s+community\b[:\-]?",
+    # Generic recording disclaimers that sometimes leak into transcripts
+    r"no part of this recording may be reproduced[^\n\.]*",
+]
+
+def _remove_extended_artifacts(text: str) -> tuple[str, dict]:
+    """Remove broader watermark/prompt/copyright artifact lines.
+
+    Returns (cleaned_text, stats_dict).
+    """
+    removed_counts = {"patterns": {}, "lines_removed": 0, "inline_removed": {}}
+    # Inline removals for soft artifacts
+    for pat in _ARTIFACT_INLINE_PATTERNS:
+        new_text, n = re.subn(pat, "", text, flags=re.IGNORECASE)
+        if n:
+            removed_counts["inline_removed"][pat] = n
+            text = new_text
+
+    # Also remove watermark-style patterns inline to avoid single-line wipeouts
+    for pat in _ARTIFACT_DROP_LINE_PATTERNS:
+        new_text, n = re.subn(pat, "", text, flags=re.IGNORECASE)
+        if n:
+            removed_counts["patterns"][pat] = n
+            text = new_text
+    return text, removed_counts
+
+def _normalize_sentence(s: str) -> str:
+    s = s.strip().lower()
+    s = re.sub(r"[\s]+", " ", s)
+    s = s.rstrip(".,!?;:")
+    return s
+
+def _limit_global_sentence_frequency(text: str, max_global: int = 4) -> tuple[str, dict]:
+    """Limit occurrences of identical (normalized) sentences in entire document.
+    Returns (cleaned_text, stats).
+    """
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    counts = {}
+    kept = []
+    dropped = 0
+    cap = max(1, int(os.environ.get("TRANSCRIBE_GLOBAL_SENTENCE_CAP", max_global)))
+    for sent in sentences:
+        norm = _normalize_sentence(sent)
+        if not norm:
+            continue
+        prev = counts.get(norm, 0)
+        if prev < cap:
+            kept.append(sent)
+        else:
+            dropped += 1
+        counts[norm] = prev + 1
+    stats = {
+        "unique_sentences": len(counts),
+        "total_sentences": len(sentences),
+        "dropped_sentences": dropped,
+        "cap": cap,
+        "top_repeated": sorted(((k, v) for k, v in counts.items() if v > 1), key=lambda x: -x[1])[:20],
+    }
+    return " ".join(kept), stats
+
+def _detect_and_break_loops(text: str, window: int = 12, dup_ratio: float = 0.5) -> tuple[str, dict]:
+    """Detect high repetition loops in sliding window and prune repeats beyond first occurrence.
+    Returns (cleaned_text, stats).
+    """
+    win = max(4, int(os.environ.get("TRANSCRIBE_LOOP_WINDOW", window)))
+    ratio = float(os.environ.get("TRANSCRIBE_LOOP_DUP_RATIO", dup_ratio))
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    cleaned = []
+    loop_events = 0
+    i = 0
+    while i < len(sentences):
+        chunk = sentences[i:i+win]
+        norms = [_normalize_sentence(c) for c in chunk if c.strip()]
+        if norms:
+            most_common = max((norms.count(n) for n in set(norms)))
+            if most_common / max(1, len(norms)) >= ratio and most_common > 1:
+                # Loop detected: keep first unique order of sentences once
+                loop_events += 1
+                seen = set()
+                for s in chunk:
+                    n = _normalize_sentence(s)
+                    if n not in seen:
+                        cleaned.append(s)
+                        seen.add(n)
+                i += win
+                continue
+        if sentences[i].strip():
+            cleaned.append(sentences[i])
+        i += 1
+    stats = {"loop_events": loop_events, "original_sentences": len(sentences), "final_sentences": len(cleaned)}
+    return " ".join(cleaned), stats
+
+def _summarize_quality(text: str, extra_stats: dict | None = None) -> dict:
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    norm_counts = {}
+    for s in sentences:
+        n = _normalize_sentence(s)
+        if n:
+            norm_counts[n] = norm_counts.get(n, 0) + 1
+    summary = {
+        "total_sentences": len([s for s in sentences if s.strip()]),
+        "unique_sentences": len(norm_counts),
+        "top_repeated": sorted(((k, v) for k, v in norm_counts.items() if v > 1), key=lambda x: -x[1])[:25],
+    }
+    if extra_stats:
+        summary.update(extra_stats)
+    return summary
+
+
 def _fix_whisper_artifacts(text: str) -> str:
     """Fix common Whisper transcription artifacts found in analysis.
     
@@ -658,6 +848,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         # Large-v3: slightly more permissive for natural speech flow
         seg_kwargs["compression_ratio_threshold"] = 2.6
         seg_kwargs["logprob_threshold"] = -2.2
+        seg_kwargs["hallucination_silence_threshold"] = 2.5  # Increased to prevent repetition hallucinations
     
     # Apply quality mode if enabled
     quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
@@ -722,7 +913,15 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                 # Use lock to ensure only one thread accesses the model at a time
                 # This prevents race conditions in the attention mechanism
                 with model_lock:
-                    result = model.transcribe(seg_data['audio'], **seg_kwargs)
+                    # Ensure float32 dtype to avoid float/double mismatches in PyTorch
+                    audio_arr = seg_data['audio']
+                    try:
+                        import numpy as _np
+                    except Exception:
+                        _np = None
+                    if _np is not None and isinstance(audio_arr, _np.ndarray) and audio_arr.dtype != _np.float32:
+                        audio_arr = audio_arr.astype(_np.float32)
+                    result = model.transcribe(audio_arr, **seg_kwargs)
                 
                 processed_segs = []
                 
@@ -734,10 +933,23 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                         processed_segs.append(seg_copy)
                         
                         # Print transcribed text as we go (shows progress)
-                        # Filter out prompt text artifacts (sometimes Whisper includes the prompt as transcription)
+                        # Filter out prompt text artifacts and repetitive hallucinations
                         text = seg.get("text", "").strip()
-                        if text and not text.startswith("Maintain capitalization"):
-                            print(f"   {text}")
+                        
+                        # Skip prompt artifacts and obvious hallucinations
+                        skip_phrases = [
+                            "Maintain capitalization",
+                            "maintain capitalization", 
+                            "Maintain capitalization or overuse these terms"
+                        ]
+                        
+                        if text:
+                            # Check if text is mostly repetitive prompt garbage
+                            is_prompt_artifact = any(phrase in text for phrase in skip_phrases)
+                            
+                            # Don't print if it's a prompt artifact
+                            if not is_prompt_artifact:
+                                print(f"   {text}")
                 
                 return processed_segs
             except Exception as e:
@@ -769,8 +981,13 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             try:
                 for segment_data in batch:
                     segment_audio = segment_data['audio'].numpy() if hasattr(segment_data['audio'], 'numpy') else segment_data['audio']
+                    try:
+                        import numpy as _np
+                    except Exception:
+                        _np = None
+                    if _np is not None and isinstance(segment_audio, _np.ndarray) and segment_audio.dtype != _np.float32:
+                        segment_audio = segment_audio.astype(_np.float32)
                     start_time_seg = segment_data['start_time']
-                    
                     result = model.transcribe(segment_audio, **seg_kwargs)
 
                     if isinstance(result, dict) and "segments" in result:
@@ -827,6 +1044,12 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     try:
         # Collapse excessive repetitions prior to punctuation restoration
         full_text = _collapse_repetitions(full_text, max_repeats=3)
+        
+        # Remove prompt artifacts that Whisper sometimes transcribes
+        full_text = _remove_prompt_artifacts(full_text)
+        # Early extended artifact removal pass
+        full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
+        
         pm = PunctuationModel()
         t0 = time.time()
         full_text = pm.restore_punctuation(full_text)
@@ -837,12 +1060,29 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         
         # Fix Whisper-specific artifacts (double periods, spacing, etc.)
         full_text = _fix_whisper_artifacts(full_text)
-        
+
         # Refine capitalization to fix artifacts
         full_text = _refine_capitalization(full_text)
+        # Collapse repeated full sentences post-capitalization
+        full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
+
+        # Global sentence frequency limiting
+        full_text, global_freq_stats = _limit_global_sentence_frequency(full_text)
+        # Loop detection & pruning
+        full_text, loop_stats = _detect_and_break_loops(full_text)
+        # Second artifact sweep (post punctuation/capitalization)
+        full_text, late_artifact_stats = _remove_extended_artifacts(full_text)
+        # Quality summary
+        quality_stats = {
+            "early_artifacts": early_artifact_stats,
+            "global_frequency": global_freq_stats,
+            "loop_detection": loop_stats,
+            "late_artifacts": late_artifact_stats,
+        }
         print("✅ Capitalization & artifact refinement completed")
     except Exception as e:
         print(f"⚠️  Punctuation restoration failed: {e}")
+        quality_stats = {}
 
     try:
         formatted = split_into_paragraphs(full_text, max_length=500)
@@ -1460,7 +1700,13 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     # Use dataset optimization (parallel GPU processing) for all files when enabled
     if use_dataset:
         try:
-            return transcribe_with_dataset_optimization(input_path, output_dir, threads_override)
+            result = transcribe_with_dataset_optimization(input_path, output_dir, threads_override)
+            # If we got a valid result, return it immediately
+            if result and isinstance(result, str) and os.path.exists(result):
+                return result
+            # If result is invalid, fall through to standard processing
+            print(f"⚠️  Dataset optimization returned invalid result, falling back to standard processing")
+            use_dataset = False
         except Exception as e:
             print(f"⚠️  Dataset optimization failed: {e} - falling back to standard processing")
             use_dataset = False
@@ -1972,6 +2218,20 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             t1 = time.time()
             print(f"✅ Ultra text processing completed ({t1 - t0:.1f}s)")
             
+            # Extended artifact + repetition pipeline (ULTRA path)
+            full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
+            full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
+            full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
+            full_text, global_freq_stats = _limit_global_sentence_frequency(full_text)
+            full_text, loop_stats = _detect_and_break_loops(full_text)
+            full_text, late_artifact_stats = _remove_extended_artifacts(full_text)
+            quality_stats = {
+                "early_artifacts": early_artifact_stats,
+                "global_frequency": global_freq_stats,
+                "loop_detection": loop_stats,
+                "late_artifacts": late_artifact_stats,
+            }
+
             # Advanced paragraph formatting
             try:
                 paragraph_formatter = create_advanced_paragraph_formatter(max_workers=text_workers)
@@ -2002,6 +2262,20 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 t1 = time.time()
                 print(f"✅ Enhanced punctuation restoration completed (3 passes | {t1 - t0:.1f}s)")
                 
+                # Apply extended artifact + repetition controls (enhanced path)
+                full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
+                full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
+                full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
+                full_text, global_freq_stats = _limit_global_sentence_frequency(full_text)
+                full_text, loop_stats = _detect_and_break_loops(full_text)
+                full_text, late_artifact_stats = _remove_extended_artifacts(full_text)
+                quality_stats = {
+                    "early_artifacts": early_artifact_stats,
+                    "global_frequency": global_freq_stats,
+                    "loop_detection": loop_stats,
+                    "late_artifacts": late_artifact_stats,
+                }
+
                 # Enhanced paragraph formatting
                 formatted = split_into_paragraphs(full_text, max_length=600)
                 if isinstance(formatted, list):
@@ -2023,6 +2297,20 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 t1 = time.time()
                 print(f"✅ Basic punctuation restoration completed (4 passes | {t1 - t0:.1f}s)")
                 
+                # Basic path artifact & repetition pipeline
+                full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
+                full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
+                full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
+                full_text, global_freq_stats = _limit_global_sentence_frequency(full_text)
+                full_text, loop_stats = _detect_and_break_loops(full_text)
+                full_text, late_artifact_stats = _remove_extended_artifacts(full_text)
+                quality_stats = {
+                    "early_artifacts": early_artifact_stats,
+                    "global_frequency": global_freq_stats,
+                    "loop_detection": loop_stats,
+                    "late_artifacts": late_artifact_stats,
+                }
+
                 # Enhanced paragraph formatting
                 formatted = split_into_paragraphs(full_text, max_length=600)
                 if isinstance(formatted, list):
@@ -2034,6 +2322,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         print(f"⚠️  Text processing failed: {e}")
         # Last fallback
         formatted_text = full_text
+        quality_stats = {}
 
     # Refine capitalization to fix artifacts (applies to all processing paths)
     try:
@@ -2067,6 +2356,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     base_name = os.path.splitext(os.path.basename(input_path))[0]
     txt_path = os.path.join(output_dir, f"{base_name}.txt")
     docx_path = os.path.join(output_dir, f"{base_name}.docx")
+    quality_path = os.path.join(output_dir, f"{base_name}_quality_report.json")
 
     # Save TXT
     try:
@@ -2122,6 +2412,13 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     print(f"📄 Text file: {txt_path}")
     print(f"📄 Word document: {docx_path}")
     print(f"⏱️  Total time: {format_duration(elapsed)}")
+    try:
+        base_quality = _summarize_quality(formatted_text, {"pipeline": quality_stats})
+        with open(quality_path, "w", encoding="utf-8") as qf:
+            json.dump(base_quality, qf, indent=2)
+        print(f"📊 Quality report saved: {quality_path}")
+    except Exception as qerr:
+        print(f"⚠️  Failed to save quality report: {qerr}")
 
     # Cleanup caches (do not touch torch modules)
     force_gpu_memory_cleanup()
@@ -2157,7 +2454,7 @@ def transcribe_file_optimised(input_path, model_name="medium", output_dir=None, 
 
 def main():
     parser = argparse.ArgumentParser(description="Simplified auto-detected transcription")
-    parser.add_argument("--input", required=True, help="Input audio/video file")
+    parser.add_argument("--input", help="Input audio/video file (omit when using --postprocess-only)")
     parser.add_argument("--output-dir", help="Output directory (default: same directory as input file)")
     parser.add_argument("--threads", type=int, help="Override CPU threads for PyTorch/OMP/MKL")
     parser.add_argument("--ram-gb", type=float, help="Cap usable system RAM in GB (env TRANSCRIBE_RAM_GB)")
@@ -2165,7 +2462,51 @@ def main():
     parser.add_argument("--vram-gb", type=float, help="Cap usable CUDA VRAM in GB (env TRANSCRIBE_VRAM_GB)")
     parser.add_argument("--vram-frac", "--vram-fraction", dest="vram_fraction", type=float, help="Cap usable CUDA VRAM as fraction 0-1 (env TRANSCRIBE_VRAM_FRACTION)")
     parser.add_argument("--vad", action="store_true", help="Enable VAD segmentation for parallel processing performance boost (env TRANSCRIBE_VAD)")
+    parser.add_argument("--postprocess-only", help="Existing transcript TXT file to post-process (skips audio decoding)")
     args = parser.parse_args()
+
+    # Post-process only mode -------------------------------------------------
+    if args.postprocess_only:
+        src = args.postprocess_only
+        if not os.path.isfile(src):
+            print(f"Error: postprocess file not found: {src}")
+            return 1
+        out_dir = args.output_dir or os.path.dirname(src)
+        os.makedirs(out_dir, exist_ok=True)
+        raw_text = open(src, "r", encoding="utf-8", errors="ignore").read()
+        before_quality = _summarize_quality(raw_text, {"stage": "before"})
+        # Apply pipeline (mirror transcription post-processing w/out punctuation restoration model)\n
+        processed = raw_text
+        processed = _collapse_repetitions(processed, max_repeats=3)
+        processed = _remove_prompt_artifacts(processed)
+        processed, early_artifacts = _remove_extended_artifacts(processed)
+        processed = _fix_whisper_artifacts(processed)
+        processed = _refine_capitalization(processed)
+        processed = _collapse_sentence_repetitions(processed, max_repeats=3)
+        processed, global_freq = _limit_global_sentence_frequency(processed)
+        processed, loop_stats = _detect_and_break_loops(processed)
+        processed, late_artifacts = _remove_extended_artifacts(processed)
+        after_quality = _summarize_quality(processed, {
+            "stage": "after",
+            "early_artifacts": early_artifacts,
+            "global_frequency": global_freq,
+            "loop_detection": loop_stats,
+            "late_artifacts": late_artifacts,
+        })
+        base = os.path.splitext(os.path.basename(src))[0]
+        out_txt = os.path.join(out_dir, f"{base}_postprocessed.txt")
+        out_json = os.path.join(out_dir, f"{base}_quality_compare.json")
+        try:
+            with open(out_txt, "w", encoding="utf-8") as fpp:
+                fpp.write(processed)
+            with open(out_json, "w", encoding="utf-8") as fj:
+                json.dump({"before": before_quality, "after": after_quality}, fj, indent=2)
+            print(f"✅ Post-processed transcript saved: {out_txt}")
+            print(f"📊 Quality comparison saved: {out_json}")
+        except Exception as e:
+            print(f"Error saving postprocess outputs: {e}")
+            return 1
+        return 0
 
     if not os.path.isfile(args.input):
         print(f"Error: Input file not found: {args.input}")

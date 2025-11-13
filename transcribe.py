@@ -30,11 +30,25 @@ except Exception:
 
 
 def format_duration(seconds):
-    """Convert seconds to a readable time format (HH:MM:SS or MM:SS)."""
+    """Convert seconds to a readable time format (HH:MM:SS or MM:SS).
+
+    Robust against tensors / numpy scalars that lack __round__ and against
+    obviously invalid huge values (returns 00:00:00 for > 1 year).
+    """
     if seconds is None:
         return None
-    
-    seconds = round(seconds, 2)
+    try:
+        # Extract scalar from tensor/numpy wrappers
+        if hasattr(seconds, 'item'):
+            seconds = seconds.item()
+        seconds = float(seconds)
+        if seconds < 0:
+            seconds = 0.0
+        if seconds > 31536000:  # > 1 year -> treat as invalid
+            return "00:00:00"
+        seconds = round(seconds, 2)
+    except Exception:
+        return "00:00:00"
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = seconds % 60
@@ -46,11 +60,23 @@ def format_duration(seconds):
 
 
 def format_duration_minutes_only(seconds):
-    """Convert seconds to minutes and seconds format (MM:SS) for transcription time."""
+    """Convert seconds to minutes and seconds format (MM:SS) for transcription time.
+
+    Safe for tensor/numpy scalar input.
+    """
     if seconds is None:
         return None
-    
-    seconds = round(seconds, 2)
+    try:
+        if hasattr(seconds, 'item'):
+            seconds = seconds.item()
+        seconds = float(seconds)
+        if seconds < 0:
+            seconds = 0.0
+        if seconds > 31536000:
+            return "00:00"  # treat absurd durations as invalid
+        seconds = round(seconds, 2)
+    except Exception:
+        return "00:00"
     total_minutes = int(seconds // 60)
     remaining_seconds = seconds % 60
     
@@ -66,9 +92,15 @@ def format_duration_hms(seconds: float | int | None) -> str | None:
     if seconds is None:
         return None
     try:
-        s = int(round(float(seconds)))
+        # Handle potential tensor/numpy types
+        if hasattr(seconds, 'item'):
+            seconds = seconds.item()
+        s = int(float(seconds))
+        # Sanity check: reject obviously wrong values (> 1 year)
+        if s > 31536000:
+            return "00:00:00"
     except Exception:
-        return None
+        return "00:00:00"
     hours = s // 3600
     minutes = (s % 3600) // 60
     secs = s % 60
