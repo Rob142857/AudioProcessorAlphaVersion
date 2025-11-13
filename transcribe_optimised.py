@@ -38,6 +38,124 @@ def _ensure_torch_available():
         raise RuntimeError(f"PyTorch is required but failed to import: {_torch_import_error}")
 
 
+def is_verbatim() -> bool:
+    """Return True if verbatim/faithful output is requested (default True).
+
+    Disable by setting TRANSCRIBE_VERBATIM to 0/false/no.
+    """
+    val = os.environ.get("TRANSCRIBE_VERBATIM", "1").strip()
+    return val.lower() not in ("0", "false", "no")
+
+
+def _is_verbatim_mode() -> bool:
+    """Return True when verbatim/faithful mode is enabled. Default: True.
+
+    Controlled by env TRANSCRIBE_VERBATIM: "1"/"true" to enable; "0"/"false" to disable.
+    """
+    val = str(os.environ.get("TRANSCRIBE_VERBATIM", "1")).strip().lower()
+    return val not in ("0", "false", "off")
+
+
+def _apply_recommended_env_defaults() -> None:
+    """Set optimized default environment variables using setdefault.
+
+    We prioritize faithful transcription, safe GPU usage (VRAM margin), deterministic
+    behavior (quality/beam off by default), and conservative preprocessing.
+    Explicit user overrides always take precedence.
+    """
+    defaults = {
+        # Fidelity & formatting
+        "TRANSCRIBE_VERBATIM": "1",            # Keep raw Whisper text by default
+        "TRANSCRIBE_PARAGRAPH_GAP": "1.2",     # Silence gap (seconds) for paragraph breaks
+        # Model selection
+        "TRANSCRIBE_MODEL_NAME": "large-v3",   # Accuracy-first; GPU preflight will fallback if needed
+        # GPU safety / fragmentation mitigation
+        "TRANSCRIBE_GPU_FRACTION": "0.92",     # Leave headroom instead of 0.99 to reduce OOM risk
+        # Processing feature toggles (opt-in)
+        "TRANSCRIBE_QUALITY_MODE": "0",        # Beam search disabled unless explicitly enabled
+        "TRANSCRIBE_PREPROC_STRONG_FILTERS": "0", # Conservative audio preprocessing
+        "TRANSCRIBE_USE_DATASET": "0",         # Disable external segmentation by default
+        "TRANSCRIBE_VAD": "0",                 # Disable VAD unless needed
+        # Optional force flags disabled
+        "TRANSCRIBE_FORCE_GPU": "0",           # Respect preflight memory heuristic
+        "TRANSCRIBE_FORCE_FP16": "0",          # Stability over memory unless user demands
+        # Perf mode off (user can enable for aggressive thread tweaks)
+        "TRANSCRIBE_MAX_PERF": "0",
+    }
+    alloc_conf_default = "expandable_segments:True,max_split_size_mb:64"
+    for k, v in defaults.items():
+        os.environ.setdefault(k, v)
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", alloc_conf_default)
+
+# Apply defaults at import time without overriding user choices
+_apply_recommended_env_defaults()
+
+# Compatibility shim for calling model.transcribe() across backends and versions
+# Filters out kwargs that the installed backend doesn't support to avoid
+# "unexpected keyword argument" errors (e.g., older faster-whisper builds)
+import inspect as _inspect  # kept module-level for reuse across call sites
+
+def _compatible_transcribe_call(_model, _audio, _kwargs):
+    try:
+        sig = _inspect.signature(_model.transcribe)
+        allowed = set(sig.parameters.keys())
+        # Apply lightweight aliasing for known parameter name differences
+        kw = dict(_kwargs or {})
+        if 'logprob_threshold' in kw and 'log_prob_threshold' in allowed:
+            kw['log_prob_threshold'] = kw.pop('logprob_threshold')
+        # Keep only supported keys; leave values unchanged for the rest
+        filtered = {k: v for k, v in kw.items() if k in allowed}
+    except Exception:
+        # If we can’t introspect, pass kwargs through unchanged
+        filtered = dict(_kwargs or {})
+    return _model.transcribe(_audio, **filtered)
+
+def _as_result_dict(res: Any) -> Dict[str, Any]:
+    """Normalize backend-specific transcribe() outputs to a common dict.
+
+    Expected shape:
+      { 'text': str, 'segments': [ { 'text': str, 'start': float, 'end': float }, ... ], ... }
+
+    Supports:
+      - OpenAI whisper: dict with 'segments'/'text'
+      - faster-whisper: (segments_iterable, info) tuple
+    """
+    try:
+        # Native whisper-like result
+        if isinstance(res, dict):
+            return res
+
+        # faster-whisper returns (segments, info)
+        if isinstance(res, tuple) and len(res) == 2:
+            segments_iter, info = res
+            seg_list = []
+            parts = []
+            try:
+                for s in segments_iter or []:
+                    txt = (getattr(s, 'text', '') or '').strip()
+                    start = float(getattr(s, 'start', 0.0) or 0.0)
+                    end = float(getattr(s, 'end', 0.0) or 0.0)
+                    if txt:
+                        seg_list.append({'text': txt, 'start': start, 'end': end})
+                        parts.append(txt)
+            except Exception:
+                pass
+            out: Dict[str, Any] = {
+                'segments': seg_list,
+                'text': ' '.join(parts).strip(),
+            }
+            try:
+                lang = getattr(info, 'language', None) or getattr(info, 'language_code', None)
+                if lang:
+                    out['language'] = lang
+            except Exception:
+                pass
+            return out
+    except Exception:
+        pass
+    return {'segments': [], 'text': ''}
+
+
 def preprocess_audio_with_padding(input_path: str, temp_dir: str = None) -> str:
     """
     Preprocess audio/video file to high-quality MP3 with silence padding.
@@ -82,17 +200,25 @@ def preprocess_audio_with_padding(input_path: str, temp_dir: str = None) -> str:
             else:
                 raise FileNotFoundError("ffmpeg not found. Please install ffmpeg or ensure it's in PATH.")
         
+        # Choose conservative vs strong filters based on env (default: conservative)
+        strong_filters = str(os.environ.get("TRANSCRIBE_PREPROC_STRONG_FILTERS", "")).strip() in ("1", "true", "True")
+        if strong_filters:
+            # Legacy/strong filtering for very noisy tapes
+            afilters = "adelay=1000|1000,highpass=f=80,lowpass=f=8000,afftdn=nf=-25,loudnorm,apad=pad_len=48000"
+        else:
+            # Conservative: light padding + loudness normalization only (preserves fidelity)
+            afilters = "adelay=500|500,loudnorm,apad=pad_len=24000"
+
         # FFmpeg command to:
-        # 1. Add 1 second silence at start: adelay=1000|1000 (1000ms delay for both channels)
-        # 2. Apply noise reduction for old digitized tapes (highpass, lowpass, afftdn)
-        # 3. Normalize audio levels (loudnorm)
-        # 4. Add 1 second silence at end using apad
-        # 5. Convert to high-quality MP3 (320kbps)
+        # 1) Add brief silence padding to prevent start/end truncation
+        # 2) Normalize loudness
+        # 3) Optionally apply stronger denoise/EQ if explicitly enabled
+        # 4) Convert to high-quality MP3 (320kbps)
         cmd = [
             ffmpeg_cmd,
             "-i", input_path,
-            # Audio processing filters (enhanced for old digitized tapes)
-            "-af", "adelay=1000|1000,highpass=f=80,lowpass=f=8000,afftdn=nf=-25,loudnorm,apad=pad_len=48000",  # Enhanced filters for old tapes
+            # Audio processing filters (selected above)
+            "-af", afilters,
             # High quality MP3 encoding
             "-codec:a", "libmp3lame",
             "-b:a", "320k",
@@ -317,13 +443,10 @@ def build_initial_prompt(terms: list, max_chars: int = 400) -> Optional[str]:
     if not terms:
         return None
     try:
-        # Join terms with semicolons for clarity
+        # Best practice: provide only a short neutral vocabulary list to reduce prompt leakage
+        # Avoid meta-instructions that can be transcribed verbatim.
         payload = '; '.join(terms)
-        base = (
-            "If and only if these domain terms are clearly spoken, prefer them exactly as written; "
-            "otherwise ignore them. Do not force, repeat, or overuse these terms. Maintain capitalization: "
-        )
-        prompt = (base + payload).strip()
+        prompt = payload.strip()
         if len(prompt) > max_chars:
             prompt = prompt[: max_chars - 3].rstrip() + '...'
         return prompt
@@ -596,6 +719,73 @@ def _fix_whisper_artifacts(text: str) -> str:
         return text
 
 
+def _clean_repetitions_in_segment(text: str, max_phrase_repeats: int = 2) -> str:
+    """Light, in-transcription de-repetition applied per segment.
+
+    - Collapses immediate repeats of short phrases (1–5 words) within a single segment
+    - Keeps at most `max_phrase_repeats` consecutive occurrences
+    - Intended to run before any post-processing, preserving 'verbatim' intent while
+      removing obvious decode loops that occur within one segment.
+    """
+    try:
+        t = re.sub(r"\s*,\s*", ", ", text)
+        pattern = r"\b((?:[A-Za-z']+\s+){0,4}[A-Za-z']+)\b(?:,?\s+\1\b){" + str(max_phrase_repeats) + ",}"
+
+        def repl(m):
+            phrase = m.group(1)
+            return (phrase + ", ") * (max_phrase_repeats - 1) + phrase
+
+        for _ in range(2):
+            new_t = re.sub(pattern, repl, t, flags=re.IGNORECASE)
+            if new_t == t:
+                break
+            t = new_t
+        return t
+    except Exception:
+        return text
+
+
+def _segments_to_paragraphs(segments: list, gap_threshold: float = 1.2) -> str:
+    """Build coherent paragraphs from Whisper segments without altering words.
+
+    Rules:
+      - Start a new paragraph when the gap between segments >= gap_threshold seconds
+      - Also break when a segment ends with terminal punctuation and the next segment starts a new sentence
+      - Preserve original segment text (except for in-segment repetition cleanup)
+    """
+    paras: list[str] = []
+    curr: list[str] = []
+    prev_end = None
+    for seg in segments:
+        txt = str(seg.get("text", "")).strip()
+        if not txt:
+            continue
+        # light per-segment repetition cleanup
+        txt = _clean_repetitions_in_segment(txt)
+        start = float(seg.get("start", 0.0) or 0.0)
+        end = float(seg.get("end", 0.0) or 0.0)
+
+        new_para = False
+        if prev_end is not None and start - prev_end >= gap_threshold:
+            new_para = True
+        elif curr:
+            # if previous chunk ends with .!? and current begins with capital letter
+            if curr[-1][-1:] in ".!?":
+                if txt and txt[0].isupper():
+                    new_para = True
+
+        if new_para and curr:
+            paras.append(" ".join(curr).strip())
+            curr = []
+
+        curr.append(txt)
+        prev_end = end
+
+    if curr:
+        paras.append(" ".join(curr).strip())
+    return "\n\n".join(paras)
+
+
 def _refine_capitalization(text: str) -> str:
     """Fix capitalization artifacts without changing word content.
     
@@ -724,6 +914,8 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     
     # Check for model selection from environment variable (set by GUI)
     selected_model_name = os.environ.get("TRANSCRIBE_MODEL_NAME", "large-v3")
+    # Respect user choice exactly; no automatic model size downgrades.
+    # We will attempt smarter GPU loading (FP32 then FP16 fallback) before CPU fallback.
 
     try:
         avail = set(whisper.available_models())
@@ -843,12 +1035,10 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         seg_kwargs["compression_ratio_threshold"] = 2.2
         seg_kwargs["logprob_threshold"] = -1.5
         seg_kwargs["no_speech_threshold"] = 0.4
-        seg_kwargs["hallucination_silence_threshold"] = 2.0
     elif selected_model_name == "large-v3":
         # Large-v3: slightly more permissive for natural speech flow
         seg_kwargs["compression_ratio_threshold"] = 2.6
         seg_kwargs["logprob_threshold"] = -2.2
-        seg_kwargs["hallucination_silence_threshold"] = 2.5  # Increased to prevent repetition hallucinations
     
     # Apply quality mode if enabled
     quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
@@ -921,7 +1111,8 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                         _np = None
                     if _np is not None and isinstance(audio_arr, _np.ndarray) and audio_arr.dtype != _np.float32:
                         audio_arr = audio_arr.astype(_np.float32)
-                    result = model.transcribe(audio_arr, **seg_kwargs)
+                    result = _compatible_transcribe_call(model, audio_arr, seg_kwargs)
+                    result = _as_result_dict(result)
                 
                 processed_segs = []
                 
@@ -988,7 +1179,8 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
                     if _np is not None and isinstance(segment_audio, _np.ndarray) and segment_audio.dtype != _np.float32:
                         segment_audio = segment_audio.astype(_np.float32)
                     start_time_seg = segment_data['start_time']
-                    result = model.transcribe(segment_audio, **seg_kwargs)
+                    result = _compatible_transcribe_call(model, segment_audio, seg_kwargs)
+                    result = _as_result_dict(result)
 
                     if isinstance(result, dict) and "segments" in result:
                         for seg in result["segments"]:
@@ -1042,55 +1234,50 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
 
     # Post-processing (same as original)
     try:
-        # Collapse excessive repetitions prior to punctuation restoration
-        full_text = _collapse_repetitions(full_text, max_repeats=3)
-        
-        # Remove prompt artifacts that Whisper sometimes transcribes
-        full_text = _remove_prompt_artifacts(full_text)
-        # Early extended artifact removal pass
-        full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
-        
-        pm = PunctuationModel()
-        t0 = time.time()
-        full_text = pm.restore_punctuation(full_text)
-        t1 = time.time()
-        full_text = pm.restore_punctuation(full_text)
-        t2 = time.time()
-        print(f"✅ Punctuation restoration completed (passes: 2 | {t1 - t0:.1f}s + {t2 - t1:.1f}s)")
-        
-        # Fix Whisper-specific artifacts (double periods, spacing, etc.)
-        full_text = _fix_whisper_artifacts(full_text)
-
-        # Refine capitalization to fix artifacts
-        full_text = _refine_capitalization(full_text)
-        # Collapse repeated full sentences post-capitalization
-        full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
-
-        # Global sentence frequency limiting
-        full_text, global_freq_stats = _limit_global_sentence_frequency(full_text)
-        # Loop detection & pruning
-        full_text, loop_stats = _detect_and_break_loops(full_text)
-        # Second artifact sweep (post punctuation/capitalization)
-        full_text, late_artifact_stats = _remove_extended_artifacts(full_text)
-        # Quality summary
-        quality_stats = {
-            "early_artifacts": early_artifact_stats,
-            "global_frequency": global_freq_stats,
-            "loop_detection": loop_stats,
-            "late_artifacts": late_artifact_stats,
-        }
-        print("✅ Capitalization & artifact refinement completed")
+        if _is_verbatim_mode():
+            # Verbatim: keep Whisper output as-is (minimal trim only)
+            quality_stats = {"verbatim": True}
+            print("🧷 Verbatim mode: skipping punctuation/capitalization/repetition/artifact passes")
+        else:
+            # Enhanced pipeline
+            full_text = _collapse_repetitions(full_text, max_repeats=3)
+            full_text = _remove_prompt_artifacts(full_text)
+            full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
+            pm = PunctuationModel()
+            t0 = time.time()
+            full_text = pm.restore_punctuation(full_text)
+            t1 = time.time()
+            full_text = pm.restore_punctuation(full_text)
+            t2 = time.time()
+            print(f"✅ Punctuation restoration completed (passes: 2 | {t1 - t0:.1f}s + {t2 - t1:.1f}s)")
+            full_text = _fix_whisper_artifacts(full_text)
+            full_text = _refine_capitalization(full_text)
+            full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
+            full_text, global_freq_stats = _limit_global_sentence_frequency(full_text)
+            full_text, loop_stats = _detect_and_break_loops(full_text)
+            full_text, late_artifact_stats = _remove_extended_artifacts(full_text)
+            quality_stats = {
+                "early_artifacts": early_artifact_stats,
+                "global_frequency": global_freq_stats,
+                "loop_detection": loop_stats,
+                "late_artifacts": late_artifact_stats,
+            }
+            print("✅ Capitalization & artifact refinement completed")
     except Exception as e:
-        print(f"⚠️  Punctuation restoration failed: {e}")
+        print(f"⚠️  Post-processing failed: {e}")
         quality_stats = {}
 
     try:
-        formatted = split_into_paragraphs(full_text, max_length=500)
-        if isinstance(formatted, list):
-            formatted_text = "\n\n".join(formatted)
-        else:
+        if _is_verbatim_mode():
             formatted_text = full_text
-        print("✅ Text formatting completed")
+            print("✅ Verbatim formatting: preserved original model text")
+        else:
+            formatted = split_into_paragraphs(full_text, max_length=500)
+            if isinstance(formatted, list):
+                formatted_text = "\n\n".join(formatted)
+            else:
+                formatted_text = full_text
+            print("✅ Text formatting completed")
     except Exception as e:
         print(f"⚠️  Text formatting failed: {e}")
         formatted_text = full_text
@@ -1123,9 +1310,13 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             doc.add_paragraph(f'Transcription time: {format_duration_hms(elapsed_total)}')
             doc.add_paragraph('')
 
-        for para in formatted_text.split("\n\n"):
-            if para.strip():
-                doc.add_paragraph(para.strip())
+        if _is_verbatim_mode():
+            # Preserve raw text as a single block to avoid reflow changes
+            doc.add_paragraph(formatted_text)
+        else:
+            for para in formatted_text.split("\n\n"):
+                if para.strip():
+                    doc.add_paragraph(para.strip())
         doc.save(docx_path)
         print(f"✅ Word document saved: {docx_path}")
     except Exception as e:
@@ -1496,7 +1687,8 @@ def transcribe_with_vad_parallel(input_path, vad_segments, model, base_transcrib
                 # Remove vad_filter since we're already using segmented audio
                 segment_kwargs.pop("vad_filter", None)
 
-                result = model.transcribe(segment_path, **segment_kwargs)
+                result = _compatible_transcribe_call(model, segment_path, segment_kwargs)
+                result = _as_result_dict(result)
 
                 # Add timing information to segments
                 if isinstance(result, dict) and "segments" in result:
@@ -1614,6 +1806,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     transcription_complete = False
     transcription_result = None
     transcription_error = None
+    using_fw = False
 
     _ensure_torch_available()
     torch_api = cast(Any, torch)
@@ -1678,15 +1871,16 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     except Exception:
         enable_speakers = False
 
-    # Check if dataset optimization should be used - DEFAULT TO TRUE for GPU systems
-    use_dataset = True  # Default to dataset optimization for better GPU utilization
+    # Check if dataset optimization should be used - DEFAULT TO OFF for quality/stability
+    # Enable via TRANSCRIBE_USE_DATASET=1 if you want the segmented GPU path.
+    use_dataset = False
     try:
         env_dataset = os.environ.get("TRANSCRIBE_USE_DATASET", "").strip()
-        if env_dataset in ("0", "false", "False"):
-            use_dataset = False
-            print("⚠️  Dataset optimization manually disabled via TRANSCRIBE_USE_DATASET=0")
+        if env_dataset in ("1", "true", "True"):
+            use_dataset = True
+            print("✅ Dataset optimization ENABLED via TRANSCRIBE_USE_DATASET=1")
     except Exception:
-        use_dataset = True
+        use_dataset = False
 
     # Check if VAD segmentation should be used
     use_vad = False
@@ -1815,16 +2009,43 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             try:
                 total_vram = float(config.get("cuda_total_vram_gb") or 0.0)
                 allowed_vram = float(config.get("allowed_vram_gb") or 0.0)
+                # Preflight available (current used) memory BEFORE load
+                try:
+                    used_vram = torch_api.cuda.memory_allocated() / (1024**3)
+                except Exception:
+                    used_vram = 0.0
+                free_est = max(0.0, total_vram - used_vram)
+                # Heuristic model VRAM footprint (base weights + buffers)
+                MODEL_VRAM_GB_EST = {
+                    "large-v3": 7.4,
+                    "large-v3-turbo": 5.2,
+                    "large": 6.8,
+                    "medium": 3.2,
+                    "small": 1.4,
+                    "base": 0.9,
+                    "tiny": 0.6,
+                }
+                est_need = MODEL_VRAM_GB_EST.get(selected_model_name.lower(), 5.0) + 0.4  # + overhead margin
+                # Allow override to force attempt
+                force_gpu = os.environ.get("TRANSCRIBE_FORCE_GPU", "").lower() in ("1","true","yes")
+                if free_est and free_est < est_need and not force_gpu:
+                    print(f"⚠️  Preflight: estimated free VRAM {free_est:.2f}GB < required ~{est_need:.2f}GB for '{selected_model_name}'. Using CPU to avoid OOM.")
+                    raise RuntimeError("Preflight GPU memory insufficient")
                 if total_vram > 0:
                     if 0.5 <= allowed_vram < total_vram:
                         frac = max(0.05, min(0.95, allowed_vram / total_vram))
                         torch_api.cuda.set_per_process_memory_fraction(frac, device=0)
                         print(f"🧩 Limiting CUDA allocator to ~{frac*100:.0f}% of VRAM ({allowed_vram:.1f}GB)")
                     elif config.get('max_perf'):
-                        # Default to ULTRA optimised allocator in max perf mode - USE MAX VRAM
+                        # Leave a safety margin unless explicitly overridden
+                        high_frac = os.environ.get("TRANSCRIBE_GPU_FRACTION", "0.92")
                         try:
-                            torch_api.cuda.set_per_process_memory_fraction(0.99, device=0)  # Increased from 0.98 to 0.99
-                            print("🧩 Allowing CUDA allocator to use ~99% of VRAM (ULTRA OPTIMISED - MAX PERF)")
+                            frac_val = float(high_frac)
+                        except Exception:
+                            frac_val = 0.92
+                        try:
+                            torch_api.cuda.set_per_process_memory_fraction(min(0.99, max(0.5, frac_val)), device=0)
+                            print(f"🧩 Allowing CUDA allocator to use ~{min(0.99, max(0.5, frac_val))*100:.0f}% of VRAM (safety margin enabled)")
                         except Exception:
                             pass
             except Exception as e:
@@ -1855,13 +2076,104 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     pass
             except Exception:
                 pass
-            # Load model in FP16 for maximum GPU performance
-            model = whisper.load_model(selected_model_name, device="cuda")
-            # Note: FP16 conversion disabled for parallel processing to prevent tensor dimension mismatches
-            # The parallel ThreadPoolExecutor causes race conditions in attention mechanisms with FP16
-            # FP32 is more stable for concurrent multi-threaded inference
-            print(f"🎯 Model '{selected_model_name}' loaded in FP32 for stable parallel GPU processing")
-            print(f"💡 FP32 prevents tensor dimension errors during concurrent inference")
+            # Final pre-load cache clear to reduce fragmentation
+            try:
+                torch_api.cuda.empty_cache()
+                torch_api.cuda.synchronize()
+            except Exception:
+                pass
+            alloc_conf = os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "")
+            if not alloc_conf:
+                # Provide sane defaults with expandable segments unless user overrides
+                os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:64"
+            backend = os.environ.get("TRANSCRIBE_BACKEND", "native").lower()
+            using_fw = False
+            if backend == "faster-whisper":
+                try:
+                    from faster_whisper import WhisperModel  # type: ignore
+                except Exception as fw_imp_e:
+                    print(f"⚠️  faster-whisper import failed ({fw_imp_e}); falling back to native backend")
+                    backend = "native"
+            if backend == "faster-whisper":
+                pref_raw = os.environ.get("TRANSCRIBE_FW_COMPUTE_TYPES", "float16,int8_float16,int8")
+                compute_order = [c.strip() for c in pref_raw.split(',') if c.strip()]
+                load_success = False
+                for idx, ctype in enumerate(compute_order, start=1):
+                    try:
+                        torch_api.cuda.empty_cache(); torch_api.cuda.synchronize()
+                        print(f"🔁 FW Attempt {idx}: compute_type={ctype}")
+                        fw_model = WhisperModel(selected_model_name, device="cuda", compute_type=ctype)
+                        model = fw_model  # type: ignore
+                        using_fw = True
+                        load_success = True
+                        print(f"🎯 faster-whisper model '{selected_model_name}' loaded (compute_type={ctype})")
+                        break
+                    except RuntimeError as rte:
+                        if 'out of memory' in str(rte).lower():
+                            print(f"⚠️  FW CUDA OOM on compute_type={ctype}: {rte}")
+                            continue
+                        print(f"⚠️  FW load error (compute_type={ctype}): {rte}")
+                        continue
+                    except Exception as e_fw:
+                        print(f"⚠️  FW general error (compute_type={ctype}): {e_fw}")
+                        continue
+                if not load_success:
+                    raise RuntimeError(f"All faster-whisper load attempts failed for '{selected_model_name}'")
+            else:
+                force_fp16_env = os.environ.get("TRANSCRIBE_FORCE_FP16", "").lower() in ("1","true","yes")
+                attempts = [
+                    {"fp16": False, "adjust_fraction": None},
+                    {"fp16": True, "adjust_fraction": 0.90},
+                    {"fp16": True, "adjust_fraction": 0.85},
+                ] if not force_fp16_env else [
+                    {"fp16": True, "adjust_fraction": None},
+                    {"fp16": True, "adjust_fraction": 0.90},
+                    {"fp16": True, "adjust_fraction": 0.85},
+                ]
+                load_success = False
+                for idx, att in enumerate(attempts, start=1):
+                    try:
+                        if att["adjust_fraction"] is not None:
+                            try:
+                                torch_api.cuda.set_per_process_memory_fraction(att["adjust_fraction"], device=0)
+                                print(f"🔁 Attempt {idx}: fraction={att['adjust_fraction']:.2f}, fp16={att['fp16']}")
+                            except Exception:
+                                print(f"🔁 Attempt {idx}: fp16={att['fp16']} (fraction adjust failed)")
+                        else:
+                            print(f"🔁 Attempt {idx}: fp16={att['fp16']}")
+                        torch_api.cuda.empty_cache(); torch_api.cuda.synchronize()
+                        model = whisper.load_model(selected_model_name, device="cuda")
+                        if att["fp16"]:
+                            try:
+                                model.to(torch_api.float16)
+                                print("🎯 Converted to FP16 for reduced VRAM footprint")
+                            except Exception as fp16_e:
+                                print(f"⚠️  FP16 conversion failed (attempt {idx}): {fp16_e}")
+                        load_success = True
+                        print(f"🎯 Model '{selected_model_name}' loaded on CUDA (attempt {idx})")
+                        break
+                    except RuntimeError as rte:
+                        msg = str(rte).lower()
+                        if "out of memory" in msg or "cuda error" in msg:
+                            print(f"⚠️  CUDA OOM on attempt {idx}: {rte}")
+                            continue
+                        else:
+                            print(f"⚠️  Non-OOM CUDA load error (attempt {idx}): {rte}")
+                            break
+                    except Exception as gen_e:
+                        print(f"⚠️  General CUDA load error (attempt {idx}): {gen_e}")
+                        break
+                if not load_success:
+                    raise RuntimeError(f"All CUDA load attempts failed for '{selected_model_name}'")
+            try:
+                used_after = torch_api.cuda.memory_allocated() / (1024**3)
+                try:
+                    total_vram_lookup = torch_api.cuda.get_device_properties(0).total_memory / (1024**3)
+                except Exception:
+                    total_vram_lookup = config.get("cuda_total_vram_gb") or 0.0
+                print(f"📊 VRAM in use after load: {used_after:.2f} GB / {total_vram_lookup:.2f} GB")
+            except Exception:
+                pass
         elif config.get("dml_available", False):
             try:
                 import torch_directml  # type: ignore
@@ -1960,7 +2272,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     transcription_error = None
 
     def _run_transcribe():
-        nonlocal transcription_complete, transcription_result, transcription_error, use_vad
+        nonlocal transcription_complete, transcription_result, transcription_error, use_vad, using_fw
         try:
             print("🔄 Starting Whisper transcription process...")
             if model is None:
@@ -1969,27 +2281,28 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             # Apply VAD segmentation if enabled
             transcribe_kwargs = {
                 "language": "en",  # Optimized for English language
+                # Use conservative defaults; let Whisper's internal fallback handle edge cases
                 "compression_ratio_threshold": 2.4,
-                "logprob_threshold": -2.0,
-                "no_speech_threshold": 0.3,
-                "condition_on_previous_text": False,
+                "logprob_threshold": None,   # default
+                "no_speech_threshold": 0.5,  # more conservative silence handling
+                "condition_on_previous_text": True,  # keep context within a single call
                 "temperature": 0.0,
-                "verbose": True,
+                # Note: temperature_increment_on_fallback not supported in some Whisper builds
+                "verbose": False,
             }
             
             # Model-specific tuning for accuracy
             if selected_model_name == "large-v3-turbo":
                 # Turbo-specific: tighter thresholds for better accuracy
-                transcribe_kwargs["compression_ratio_threshold"] = 2.2  # Stricter (was 2.4)
-                transcribe_kwargs["logprob_threshold"] = -1.5  # More selective (was -2.0)
-                transcribe_kwargs["no_speech_threshold"] = 0.4  # Better silence detection (was 0.3)
-                transcribe_kwargs["temperature"] = 0.0  # Deterministic for consistency
-                transcribe_kwargs["hallucination_silence_threshold"] = 2.0  # Prevent hallucinations
+                transcribe_kwargs["compression_ratio_threshold"] = 2.2
+                transcribe_kwargs["logprob_threshold"] = None
+                transcribe_kwargs["no_speech_threshold"] = 0.4
+                transcribe_kwargs["temperature"] = 0.0
                 print("🎯 Turbo model: Using accuracy-optimized thresholds")
             elif selected_model_name == "large-v3":
                 # Large-v3: slightly more permissive for natural speech flow
                 transcribe_kwargs["compression_ratio_threshold"] = 2.6
-                transcribe_kwargs["logprob_threshold"] = -2.2
+                transcribe_kwargs["logprob_threshold"] = None
                 print("🎯 Large-v3 model: Using balanced thresholds")
             
             # Apply quality mode if enabled
@@ -2006,6 +2319,18 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     transcribe_kwargs["beam_size"] = 5
                     transcribe_kwargs["patience"] = 2.0
                     print("🎯 Quality mode (large-v3): beam_size=5, patience=2.0")
+            
+            # Tune defaults when using faster-whisper to avoid over-pruning
+            if using_fw:
+                # Greedy and permissive capture for initial pass
+                transcribe_kwargs["beam_size"] = 1
+                transcribe_kwargs.pop("patience", None)
+                transcribe_kwargs["best_of"] = 1
+                transcribe_kwargs["no_speech_threshold"] = 0.2
+                transcribe_kwargs["compression_ratio_threshold"] = None
+                transcribe_kwargs["vad_filter"] = False
+                transcribe_kwargs["chunk_length"] = 30
+                print("🎯 FW tuning: greedy decode, low no_speech_threshold=0.2, chunk_length=30")
             
             if initial_prompt:
                 transcribe_kwargs["initial_prompt"] = initial_prompt
@@ -2037,8 +2362,100 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     use_vad = False  # Disable for this run
 
             # Call transcribe with optimized parameters
-            result = model.transcribe(working_input_path, **transcribe_kwargs)
-            transcription_result = result
+            result = _compatible_transcribe_call(model, working_input_path, transcribe_kwargs)
+            transcription_result = _as_result_dict(result)
+            try:
+                segs_dbg = transcription_result.get('segments') if isinstance(transcription_result, dict) else None
+                segs_count = len(segs_dbg) if isinstance(segs_dbg, list) else 0
+                txt_dbg = transcription_result.get('text') if isinstance(transcription_result, dict) else ''
+                print(f"🔎 Transcribe result: segments={segs_count}, text_len={len(txt_dbg) if isinstance(txt_dbg, str) else 0}")
+                if segs_count == 0 and (not isinstance(txt_dbg, str) or len(txt_dbg.strip()) == 0):
+                    # Retry 1: conservative greedy, no VAD, short chunks
+                    print("⚠️  Empty result detected — retrying with conservative decode parameters (no VAD, greedy)")
+                    fw_retry1 = {
+                        'language': transcribe_kwargs.get('language'),  # keep if provided
+                        'task': 'transcribe',
+                        'temperature': 0.0,
+                        'beam_size': 1,
+                        'best_of': 1,
+                        'condition_on_previous_text': False,
+                        'vad_filter': False,
+                        'compression_ratio_threshold': None,
+                        'log_prob_threshold': None,
+                        'no_speech_threshold': 0.5,
+                        'without_timestamps': False,
+                        'chunk_length': 30,
+                    }
+                    # Drop initial_prompt on FW retries to avoid bias blocking detection
+                    result2 = _compatible_transcribe_call(model, working_input_path, fw_retry1)
+                    transcription_result = _as_result_dict(result2)
+                    segs_dbg2 = transcription_result.get('segments') if isinstance(transcription_result, dict) else None
+                    segs_count2 = len(segs_dbg2) if isinstance(segs_dbg2, list) else 0
+                    txt_dbg2 = transcription_result.get('text') if isinstance(transcription_result, dict) else ''
+                    print(f"🔎 Retry result: segments={segs_count2}, text_len={len(txt_dbg2) if isinstance(txt_dbg2, str) else 0}")
+
+                    # Retry 2 (optional): VAD-filtered greedy capture; OFF by default due to runtime
+                    if segs_count2 == 0 and (not isinstance(txt_dbg2, str) or len(txt_dbg2.strip()) == 0):
+                        if str(os.environ.get('TRANSCRIBE_FW_RETRY2', '0')).lower() in ('1','true','yes'):
+                            print("⚠️  Retry still empty — trying VAD-filtered greedy decode with low no_speech threshold (FW_RETRY2=on)")
+                            fw_retry2 = {
+                                'language': None,  # auto-detect language
+                                'task': 'transcribe',
+                                'temperature': 0.0,
+                                'beam_size': 1,
+                                'best_of': 1,
+                                'condition_on_previous_text': False,
+                                'vad_filter': True,
+                                'vad_parameters': {'min_silence_duration_ms': 250},
+                                'compression_ratio_threshold': None,
+                                'log_prob_threshold': None,
+                                'no_speech_threshold': 0.1,
+                                'without_timestamps': False,
+                                'chunk_length': 30,
+                            }
+                            try:
+                                result3 = _compatible_transcribe_call(model, working_input_path, fw_retry2)
+                                transcription_result = _as_result_dict(result3)
+                                segs_dbg3 = transcription_result.get('segments') if isinstance(transcription_result, dict) else None
+                                segs_count3 = len(segs_dbg3) if isinstance(segs_dbg3, list) else 0
+                                txt_dbg3 = transcription_result.get('text') if isinstance(transcription_result, dict) else ''
+                                print(f"🔎 Retry2 result: segments={segs_count3}, text_len={len(txt_dbg3) if isinstance(txt_dbg3, str) else 0}")
+                                if segs_count3 > 0 or (isinstance(txt_dbg3, str) and len(txt_dbg3.strip()) > 0):
+                                    # success; skip CPU fallback
+                                    pass
+                                else:
+                                    raise RuntimeError('Retry2 still empty')
+                            except Exception as r2e:
+                                print(f"⚠️  Retry2 error/empty: {r2e}")
+                                # Fall through to CPU fallback
+                        # Final fallback: native Whisper on CPU
+                        try:
+                            print("🔁 All FW attempts empty — falling back to native Whisper on CPU for this file")
+                            import whisper as _wh
+                            _cpu_model = _wh.load_model(selected_model_name, device='cpu')
+                            # Decode-time guard rails to mitigate repetition/hallucination
+                            cpu_kwargs = {
+                                'language': transcribe_kwargs.get('language'),
+                                # Try multiple temperatures progressively to escape repetitive paths
+                                'temperature': [0.0, 0.2, 0.4],
+                                'beam_size': 5,
+                                'patience': 2.0,
+                                # Disable conditioning on previous text to prevent feedback loops
+                                'condition_on_previous_text': False,
+                                # Enable stricter thresholds to reject low-confidence gibberish
+                                'compression_ratio_threshold': 2.0,
+                                'logprob_threshold': -0.5,
+                                'no_speech_threshold': 0.3,
+                            }
+                            # Avoid bias during fallback; only pass prompt if explicitly requested via env
+                            if initial_prompt and str(os.environ.get('TRANSCRIBE_FALLBACK_ALLOW_PROMPT', '0')).lower() in ('1','true','yes'):
+                                cpu_kwargs['initial_prompt'] = initial_prompt
+                            cpu_res = _cpu_model.transcribe(working_input_path, **cpu_kwargs)
+                            transcription_result = cpu_res if isinstance(cpu_res, dict) else _as_result_dict(cpu_res)
+                        except Exception as cpu_e:
+                            print(f"❌ Native CPU fallback failed: {cpu_e}")
+            except Exception as dbg_e:
+                print(f"⚠️  Debug/Retry flow error: {dbg_e}")
             print("✅ Whisper transcription completed successfully")
         except Exception as e:
             transcription_error = e
@@ -2129,6 +2546,11 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             
             for i, seg in enumerate(segments):
                 seg_text = str(seg.get("text", "")).strip()
+                # Light, in-segment de-repetition to curb decode loops without changing wording intent
+                try:
+                    seg_text = _clean_repetitions_in_segment(seg_text)
+                except Exception as _e:
+                    pass
                 avg_logprob = seg.get("avg_logprob", 0.0)
                 no_speech_prob = seg.get("no_speech_prob", 0.0)
                 seg_start = seg.get("start", 0)
@@ -2144,7 +2566,10 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
 
                 if should_keep:
                     cleaned_parts.append(seg_text)
-                    cleaned_segments.append(seg)
+                    # store a copy with cleaned text for paragraph assembly
+                    seg_copy = dict(seg)
+                    seg_copy["text"] = seg_text
+                    cleaned_segments.append(seg_copy)
                     kept_count += 1
                     
                     # Debug: Show first few segments to verify beginning preservation
@@ -2160,7 +2585,16 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     })
                     print(f"  🧽 Filtered segment {i+1}: [{seg_start:.1f}s-{seg_end:.1f}s] '{seg_text[:30]}...' (suspicious={suspicious}, low_conf={very_low_confidence})")
                     
-            full_text = (" ".join(cleaned_parts)).strip()
+            # Assemble text. In verbatim mode, prefer coherent paragraphs built from segment timings.
+            para_text = None
+            try:
+                if _is_verbatim_mode() and cleaned_segments:
+                    gap = float(os.environ.get("TRANSCRIBE_PARAGRAPH_GAP", "1.2"))
+                    para_text = _segments_to_paragraphs(cleaned_segments, gap_threshold=gap)
+            except Exception as _e:
+                para_text = None
+
+            full_text = (para_text if (para_text and para_text.strip()) else " ".join(cleaned_parts)).strip()
             
             # Additional debugging
             if cleaned_parts:
@@ -2190,79 +2624,28 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
 
     print(f"⚡ Hardware utilised: {device_name}")
 
-    # Post-processing with ULTRA-enhanced text processing (multi-pass with parallel processing)
+    # Post-processing with ULTRA/enhanced processors (skipped in verbatim)
     try:
-        # Try to use the new ultra text processor first
-        try:
-            from text_processor_ultra import create_ultra_processor, create_advanced_paragraph_formatter
-            
-            # Calculate optimal workers for text processing (use remaining CPU capacity)
-            text_workers = max(2, min(8, config.get("cpu_threads", 4) // 2))
-            
-            print(f"🚀 Using ULTRA text processor with {text_workers} workers and 6 specialized passes")
-            t0 = time.time()
-            
-            # Ultra processing with 6 passes for maximum quality
-            ultra_processor = create_ultra_processor(max_workers=text_workers)
-            # First, collapse obvious repetitions to avoid amplifying loops downstream
-            full_text = _collapse_repetitions(full_text, max_repeats=3)
-            # Restore punctuation using a lightweight model so sentences can be segmented properly
+        if _is_verbatim_mode():
+            formatted_text = full_text
+            quality_stats = {"verbatim": True}
+        else:
             try:
-                from deepmultilingualpunctuation import PunctuationModel
-                pm_ultra = PunctuationModel()
-                full_text = pm_ultra.restore_punctuation(full_text)
-            except Exception as punc_e:
-                print(f"⚠️  Punctuation pre-pass unavailable: {punc_e} — proceeding with ULTRA-only punctuation fixes")
-            full_text = ultra_processor.process_text_ultra(full_text, passes=6)
-            
-            t1 = time.time()
-            print(f"✅ Ultra text processing completed ({t1 - t0:.1f}s)")
-            
-            # Extended artifact + repetition pipeline (ULTRA path)
-            full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
-            full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
-            full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
-            full_text, global_freq_stats = _limit_global_sentence_frequency(full_text)
-            full_text, loop_stats = _detect_and_break_loops(full_text)
-            full_text, late_artifact_stats = _remove_extended_artifacts(full_text)
-            quality_stats = {
-                "early_artifacts": early_artifact_stats,
-                "global_frequency": global_freq_stats,
-                "loop_detection": loop_stats,
-                "late_artifacts": late_artifact_stats,
-            }
-
-            # Advanced paragraph formatting
-            try:
-                paragraph_formatter = create_advanced_paragraph_formatter(max_workers=text_workers)
-                formatted_text = paragraph_formatter.format_paragraphs_advanced(full_text, target_length=600)
-            except Exception as pf_e:
-                print(f"⚠️  Advanced paragraph formatter failed: {pf_e} — using basic split_into_paragraphs")
-                formatted = split_into_paragraphs(full_text, max_length=600)
-                formatted_text = "\n\n".join(formatted) if isinstance(formatted, list) else full_text
-            
-            t2 = time.time()
-            print(f"✅ Advanced paragraph formatting completed ({t2 - t1:.1f}s)")
-            
-        except ImportError:
-            print("⚠️  Ultra processor not available, falling back to enhanced processor")
-            # Fallback to enhanced processor
-            if _enhanced_processor_available and create_enhanced_processor is not None:
-                # Use enhanced processor with spaCy and custom rules
-                processor = create_enhanced_processor(use_spacy=True, use_transformers=False)
+                from text_processor_ultra import create_ultra_processor, create_advanced_paragraph_formatter
+                text_workers = max(2, min(8, config.get("cpu_threads", 4) // 2))
+                print(f"🚀 Using ULTRA text processor with {text_workers} workers and 6 specialized passes")
                 t0 = time.time()
-                
-                # Multiple passes for better quality
-                full_text = processor.restore_punctuation(full_text)
-                # Second pass for additional refinement
-                full_text = processor.restore_punctuation(full_text)
-                # Third pass for edge cases
-                full_text = processor.restore_punctuation(full_text)
-                
+                ultra_processor = create_ultra_processor(max_workers=text_workers)
+                full_text = _collapse_repetitions(full_text, max_repeats=3)
+                try:
+                    from deepmultilingualpunctuation import PunctuationModel
+                    pm_ultra = PunctuationModel()
+                    full_text = pm_ultra.restore_punctuation(full_text)
+                except Exception as punc_e:
+                    print(f"⚠️  Punctuation pre-pass unavailable: {punc_e} — proceeding with ULTRA-only punctuation fixes")
+                full_text = ultra_processor.process_text_ultra(full_text, passes=6)
                 t1 = time.time()
-                print(f"✅ Enhanced punctuation restoration completed (3 passes | {t1 - t0:.1f}s)")
-                
-                # Apply extended artifact + repetition controls (enhanced path)
+                print(f"✅ Ultra text processing completed ({t1 - t0:.1f}s)")
                 full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
                 full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
                 full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
@@ -2275,80 +2658,94 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     "loop_detection": loop_stats,
                     "late_artifacts": late_artifact_stats,
                 }
-
-                # Enhanced paragraph formatting
-                formatted = split_into_paragraphs(full_text, max_length=600)
-                if isinstance(formatted, list):
-                    formatted_text = "\n\n".join(formatted)
+                try:
+                    paragraph_formatter = create_advanced_paragraph_formatter(max_workers=text_workers)
+                    formatted_text = paragraph_formatter.format_paragraphs_advanced(full_text, target_length=600)
+                except Exception as pf_e:
+                    print(f"⚠️  Advanced paragraph formatter failed: {pf_e} — using basic split_into_paragraphs")
+                    formatted = split_into_paragraphs(full_text, max_length=600)
+                    formatted_text = "\n\n".join(formatted) if isinstance(formatted, list) else full_text
+            except ImportError:
+                print("⚠️  Ultra processor not available, falling back to enhanced processor")
+                if _enhanced_processor_available and create_enhanced_processor is not None:
+                    processor = create_enhanced_processor(use_spacy=True, use_transformers=False)
+                    t0 = time.time()
+                    full_text = processor.restore_punctuation(full_text)
+                    full_text = processor.restore_punctuation(full_text)
+                    full_text = processor.restore_punctuation(full_text)
+                    t1 = time.time()
+                    print(f"✅ Enhanced punctuation restoration completed (3 passes | {t1 - t0:.1f}s)")
+                    full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
+                    full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
+                    full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
+                    full_text, global_freq_stats = _limit_global_sentence_frequency(full_text)
+                    full_text, loop_stats = _detect_and_break_loops(full_text)
+                    full_text, late_artifact_stats = _remove_extended_artifacts(full_text)
+                    quality_stats = {
+                        "early_artifacts": early_artifact_stats,
+                        "global_frequency": global_freq_stats,
+                        "loop_detection": loop_stats,
+                        "late_artifacts": late_artifact_stats,
+                    }
+                    formatted = split_into_paragraphs(full_text, max_length=600)
+                    if isinstance(formatted, list):
+                        formatted_text = "\n\n".join(formatted)
+                    else:
+                        formatted_text = full_text
                 else:
-                    formatted_text = full_text
-            else:
-                # Basic fallback with multiple passes
-                from deepmultilingualpunctuation import PunctuationModel
-                pm = PunctuationModel()
-                t0 = time.time()
-                
-                # 4 passes for better quality
-                full_text = pm.restore_punctuation(full_text)
-                full_text = pm.restore_punctuation(full_text)
-                full_text = pm.restore_punctuation(full_text)
-                full_text = pm.restore_punctuation(full_text)
-                
-                t1 = time.time()
-                print(f"✅ Basic punctuation restoration completed (4 passes | {t1 - t0:.1f}s)")
-                
-                # Basic path artifact & repetition pipeline
-                full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
-                full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
-                full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
-                full_text, global_freq_stats = _limit_global_sentence_frequency(full_text)
-                full_text, loop_stats = _detect_and_break_loops(full_text)
-                full_text, late_artifact_stats = _remove_extended_artifacts(full_text)
-                quality_stats = {
-                    "early_artifacts": early_artifact_stats,
-                    "global_frequency": global_freq_stats,
-                    "loop_detection": loop_stats,
-                    "late_artifacts": late_artifact_stats,
-                }
-
-                # Enhanced paragraph formatting
-                formatted = split_into_paragraphs(full_text, max_length=600)
-                if isinstance(formatted, list):
-                    formatted_text = "\n\n".join(formatted)
-                else:
-                    formatted_text = full_text
-                    
+                    from deepmultilingualpunctuation import PunctuationModel
+                    pm = PunctuationModel()
+                    t0 = time.time()
+                    full_text = pm.restore_punctuation(full_text)
+                    full_text = pm.restore_punctuation(full_text)
+                    full_text = pm.restore_punctuation(full_text)
+                    full_text = pm.restore_punctuation(full_text)
+                    t1 = time.time()
+                    print(f"✅ Basic punctuation restoration completed (4 passes | {t1 - t0:.1f}s)")
+                    full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
+                    full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
+                    full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
+                    full_text, global_freq_stats = _limit_global_sentence_frequency(full_text)
+                    full_text, loop_stats = _detect_and_break_loops(full_text)
+                    full_text, late_artifact_stats = _remove_extended_artifacts(full_text)
+                    quality_stats = {
+                        "early_artifacts": early_artifact_stats,
+                        "global_frequency": global_freq_stats,
+                        "loop_detection": loop_stats,
+                        "late_artifacts": late_artifact_stats,
+                    }
+                    formatted = split_into_paragraphs(full_text, max_length=600)
+                    if isinstance(formatted, list):
+                        formatted_text = "\n\n".join(formatted)
+                    else:
+                        formatted_text = full_text
     except Exception as e:
         print(f"⚠️  Text processing failed: {e}")
-        # Last fallback
         formatted_text = full_text
         quality_stats = {}
 
     # Refine capitalization to fix artifacts (applies to all processing paths)
     try:
-        # Fix Whisper-specific artifacts first
-        formatted_text = _fix_whisper_artifacts(formatted_text)
-        # Then refine capitalization
-        formatted_text = _refine_capitalization(formatted_text)
-        print("✅ Capitalization & artifact refinement completed")
+        if not _is_verbatim_mode():
+            # Fix Whisper-specific artifacts and capitalization only in enhanced mode
+            formatted_text = _fix_whisper_artifacts(formatted_text)
+            formatted_text = _refine_capitalization(formatted_text)
+            print("✅ Capitalization & artifact refinement completed")
     except Exception as e:
         print(f"⚠️  Capitalization refinement failed: {e}")
 
-    # Final quality check and validation
+    # Final quality check and validation (skip in verbatim)
     try:
-        if formatted_text and len(formatted_text) > 10:
-            # Ensure proper sentence structure
-            if not formatted_text.endswith(('.', '!', '?')):
-                formatted_text += '.'
-            
-            # Capitalize first letter if needed
-            if formatted_text and not formatted_text[0].isupper():
-                formatted_text = formatted_text[0].upper() + formatted_text[1:]
-                
-            print("✅ Final text validation completed")
-        else:
-            print("⚠️  Formatted text too short, using original")
-            formatted_text = full_text
+        if not _is_verbatim_mode():
+            if formatted_text and len(formatted_text) > 10:
+                if not formatted_text.endswith(('.', '!', '?')):
+                    formatted_text += '.'
+                if formatted_text and not formatted_text[0].isupper():
+                    formatted_text = formatted_text[0].upper() + formatted_text[1:]
+                print("✅ Final text validation completed")
+            else:
+                print("⚠️  Formatted text too short, using original")
+                formatted_text = full_text
     except Exception as e:
         print(f"⚠️  Text validation failed: {e}")
         formatted_text = full_text
@@ -2475,24 +2872,29 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
         raw_text = open(src, "r", encoding="utf-8", errors="ignore").read()
         before_quality = _summarize_quality(raw_text, {"stage": "before"})
-        # Apply pipeline (mirror transcription post-processing w/out punctuation restoration model)\n
-        processed = raw_text
-        processed = _collapse_repetitions(processed, max_repeats=3)
-        processed = _remove_prompt_artifacts(processed)
-        processed, early_artifacts = _remove_extended_artifacts(processed)
-        processed = _fix_whisper_artifacts(processed)
-        processed = _refine_capitalization(processed)
-        processed = _collapse_sentence_repetitions(processed, max_repeats=3)
-        processed, global_freq = _limit_global_sentence_frequency(processed)
-        processed, loop_stats = _detect_and_break_loops(processed)
-        processed, late_artifacts = _remove_extended_artifacts(processed)
-        after_quality = _summarize_quality(processed, {
-            "stage": "after",
-            "early_artifacts": early_artifacts,
-            "global_frequency": global_freq,
-            "loop_detection": loop_stats,
-            "late_artifacts": late_artifacts,
-        })
+
+        if _is_verbatim_mode():
+            processed = raw_text
+            after_quality = _summarize_quality(processed, {"stage": "verbatim"})
+        else:
+            # Apply pipeline (mirror transcription post-processing w/out punctuation restoration model)
+            processed = raw_text
+            processed = _collapse_repetitions(processed, max_repeats=3)
+            processed = _remove_prompt_artifacts(processed)
+            processed, early_artifacts = _remove_extended_artifacts(processed)
+            processed = _fix_whisper_artifacts(processed)
+            processed = _refine_capitalization(processed)
+            processed = _collapse_sentence_repetitions(processed, max_repeats=3)
+            processed, global_freq = _limit_global_sentence_frequency(processed)
+            processed, loop_stats = _detect_and_break_loops(processed)
+            processed, late_artifacts = _remove_extended_artifacts(processed)
+            after_quality = _summarize_quality(processed, {
+                "stage": "after",
+                "early_artifacts": early_artifacts,
+                "global_frequency": global_freq,
+                "loop_detection": loop_stats,
+                "late_artifacts": late_artifacts,
+            })
         base = os.path.splitext(os.path.basename(src))[0]
         out_txt = os.path.join(out_dir, f"{base}_postprocessed.txt")
         out_json = os.path.join(out_dir, f"{base}_quality_compare.json")
