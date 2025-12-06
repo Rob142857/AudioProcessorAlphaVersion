@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 """
 Preload Whisper models to avoid first-run download delays.
-This script downloads and caches both large-v3 and large-v3-turbo models during installation.
+This script downloads and caches models for all supported backends:
+- Native OpenAI Whisper (large-v3, large-v3-turbo)
+- Faster-Whisper (CTranslate2)
+- Distil-Whisper (HuggingFace)
 """
 
 import os
 import sys
 import logging
 
-def preload_whisper_models():
-    """Download and cache both large-v3 and large-v3-turbo Whisper models."""
+
+def preload_native_whisper():
+    """Download and cache native OpenAI Whisper models."""
+    print("\n" + "="*60)
+    print("NATIVE WHISPER MODELS")
+    print("="*60)
+    
     try:
         import whisper
         import torch
@@ -22,7 +30,7 @@ def preload_whisper_models():
         
         # Get cache directory
         cache_dir = torch.hub.get_dir()
-        print(f"Model cache directory: {cache_dir}\n")
+        print(f"Cache directory: {cache_dir}\n")
         
         # Models to preload (in priority order)
         models_to_load = []
@@ -30,43 +38,165 @@ def preload_whisper_models():
             models_to_load.append("large-v3-turbo")
         if "large-v3" in avail:
             models_to_load.append("large-v3")
-        if not models_to_load and "large" in avail:
-            models_to_load.append("large")
         
         if not models_to_load:
-            print("⚠ Warning: No large models found in available models list")
+            print("⚠ No large models found in available models list")
             return False
         
-        print(f"Preloading {len(models_to_load)} Whisper model(s)...")
+        print(f"Preloading {len(models_to_load)} native Whisper model(s)...")
         
-        # Load each model
         success_count = 0
         for model_name in models_to_load:
             try:
-                print(f"\n[{success_count + 1}/{len(models_to_load)}] Loading {model_name}...")
+                print(f"\n  [{success_count + 1}/{len(models_to_load)}] Loading {model_name}...")
                 model = whisper.load_model(model_name)
-                print(f"✓ Successfully preloaded: {model_name}")
-                del model  # Free memory between loads
+                print(f"  ✓ Successfully cached: {model_name}")
+                del model
                 success_count += 1
             except Exception as e:
-                print(f"❌ Failed to preload {model_name}: {e}")
+                print(f"  ❌ Failed to preload {model_name}: {e}")
         
-        if success_count > 0:
-            print(f"\n✓ Successfully preloaded {success_count}/{len(models_to_load)} model(s)")
+        print(f"\n✓ Native Whisper: {success_count}/{len(models_to_load)} models cached")
+        return success_count > 0
+        
+    except ImportError:
+        print("❌ whisper package not installed")
+        return False
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return False
+
+
+def preload_faster_whisper():
+    """Download and cache Faster-Whisper models (CTranslate2)."""
+    print("\n" + "="*60)
+    print("FASTER-WHISPER MODELS (CTranslate2)")
+    print("="*60)
+    
+    try:
+        from faster_whisper import WhisperModel
+        import torch
+        
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        compute_type = "float16" if device == "cuda" else "int8"
+        
+        print(f"Device: {device}, Compute type: {compute_type}\n")
+        
+        models_to_load = ["large-v3-turbo", "large-v3"]
+        success_count = 0
+        
+        for model_name in models_to_load:
+            try:
+                print(f"  [{success_count + 1}/{len(models_to_load)}] Loading {model_name}...")
+                model = WhisperModel(model_name, device=device, compute_type=compute_type)
+                print(f"  ✓ Successfully cached: {model_name}")
+                del model
+                success_count += 1
+            except Exception as e:
+                print(f"  ❌ Failed to preload {model_name}: {e}")
+        
+        print(f"\n✓ Faster-Whisper: {success_count}/{len(models_to_load)} models cached")
+        return success_count > 0
+        
+    except ImportError:
+        print("⚠ faster-whisper not installed (optional)")
+        return False
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return False
+
+
+def preload_distil_whisper():
+    """Download and cache Distil-Whisper model (HuggingFace)."""
+    print("\n" + "="*60)
+    print("DISTIL-WHISPER MODEL (HuggingFace)")
+    print("="*60)
+    
+    try:
+        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+        import torch
+        
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        torch_dtype = torch.float16 if device == "cuda" else torch.float32
+        
+        print(f"Device: {device}, Dtype: {torch_dtype}\n")
+        
+        model_id = "distil-whisper/distil-large-v3"
+        
+        try:
+            print(f"  Loading {model_id}...")
+            model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                model_id,
+                torch_dtype=torch_dtype,
+                low_cpu_mem_usage=True,
+                use_safetensors=True
+            )
+            processor = AutoProcessor.from_pretrained(model_id)
+            print(f"  ✓ Successfully cached: {model_id}")
+            del model, processor
+            print(f"\n✓ Distil-Whisper: model cached")
             return True
-        else:
-            print("\n❌ Failed to preload any models")
+        except Exception as e:
+            print(f"  ❌ Failed to preload {model_id}: {e}")
             return False
         
     except ImportError:
-        print("❌ Error: whisper package not installed. Install requirements.txt first.")
+        print("⚠ transformers not installed (optional)")
         return False
     except Exception as e:
-        print(f"❌ Error during model preloading: {e}")
+        print(f"❌ Error: {e}")
         return False
 
+
+def show_system_info():
+    """Display system information."""
+    print("="*60)
+    print("SYSTEM INFORMATION")
+    print("="*60)
+    
+    try:
+        import torch
+        print(f"PyTorch version: {torch.__version__}")
+        print(f"CUDA available: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            print(f"GPU: {torch.cuda.get_device_name(0)}")
+            props = torch.cuda.get_device_properties(0)
+            print(f"VRAM: {props.total_memory / (1024**3):.1f} GB")
+    except Exception as e:
+        print(f"Could not get PyTorch info: {e}")
+    
+    print()
+
+
+def preload_all_models():
+    """Download and cache all Whisper model variants."""
+    show_system_info()
+    
+    results = {}
+    
+    # Native Whisper
+    results['native'] = preload_native_whisper()
+    
+    # Faster-Whisper (optional)
+    results['faster'] = preload_faster_whisper()
+    
+    # Distil-Whisper (optional)  
+    results['distil'] = preload_distil_whisper()
+    
+    # Summary
+    print("\n" + "="*60)
+    print("SUMMARY")
+    print("="*60)
+    for backend, success in results.items():
+        status = "✓" if success else "❌"
+        print(f"  {status} {backend}")
+    
+    return results['native']  # At minimum native should work
+
+
 if __name__ == "__main__":
-    success = preload_whisper_models()
+    success = preload_all_models()
     if not success:
+        print("\n❌ Failed to preload core models")
         sys.exit(1)
-    print("\nModel preloading complete!")
+    print("\n✓ Model preloading complete!")

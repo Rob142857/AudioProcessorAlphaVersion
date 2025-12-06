@@ -95,6 +95,15 @@
       "quality_mode": 1,
       "max_repeat_cap": 3,
       "whisper_model": "large-v3"
+    },
+    "C:/Users/RobertEvans/Downloads/AudioOptimise": {
+      "domain_terms_file": "C:\\Users\\RobertEvans\\Downloads\\AudioProcessorAlphaVersion\\special_words.txt",
+      "recursive": 0,
+      "skip_existing": 1,
+      "time_header": 1,
+      "quality_mode": 1,
+      "max_repeat_cap": 3,
+      "whisper_model": "large-v3-turbo"
     }
   }
 }

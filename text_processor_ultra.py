@@ -214,6 +214,23 @@ class UltraTextProcessor:
 
     def _pass_1_basic_punctuation(self, text: str) -> str:
         """Pass 1: Basic punctuation restoration using specialized models."""
+        # Fix contraction spacing FIRST (before other punctuation fixes)
+        # Handles: "let 's" -> "let's", "I 'd" -> "I'd", "ca n't" -> "can't", etc.
+        contraction_fixes = [
+            (r"(\w)\s+'\s*s\b", r"\1's"),      # let 's -> let's
+            (r"(\w)\s+'\s*d\b", r"\1'd"),      # I 'd -> I'd  
+            (r"(\w)\s+'\s*ll\b", r"\1'll"),    # I 'll -> I'll
+            (r"(\w)\s+'\s*ve\b", r"\1've"),    # I 've -> I've
+            (r"(\w)\s+'\s*re\b", r"\1're"),    # you 're -> you're
+            (r"(\w)\s+'\s*m\b", r"\1'm"),      # I 'm -> I'm
+            (r"\bca\s+n\s*'\s*t\b", "can't"),  # ca n't -> can't
+            (r"\bwo\s+n\s*'\s*t\b", "won't"),  # wo n't -> won't
+            (r"\bdo\s+n\s*'\s*t\b", "don't"),  # do n't -> don't
+            (r"(\w)\s+-\s+(\w)", r"\1-\2"),    # co - ed -> co-ed
+        ]
+        for pattern, replacement in contraction_fixes:
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+        
         # Basic punctuation fixes (lightweight)
         text = re.sub(r'\s+([,.!?;:])', r'\1', text)  # Remove space before punctuation
         text = re.sub(r'([,.!?;:])\s*', r'\1 ', text)  # Ensure space after punctuation
@@ -323,11 +340,14 @@ class UltraTextProcessor:
             r"\bor\s+or\b": "or",
             r"\bbut\s+but\b": "but",
             
-            # Fix repeated punctuation
+            # Fix repeated punctuation - EXPANDED
             r'[.]{3,}': '...',
             r'[!]{2,}': '!',
             r'[?]{2,}': '?',
             r'[,]{2,}': ',',
+            r'\.\s*\.': '.',  # Fix ". ." double period pattern
+            r'\.\s+\.\s*': '. ',  # Fix ". . " patterns
+            r'([.!?])\s*\1+': r'\1',  # Remove consecutive same punctuation,
         }
 
         for pattern, replacement in grammar_fixes.items():

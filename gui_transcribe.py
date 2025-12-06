@@ -21,6 +21,16 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 TKINTER_AVAILABLE = True
 
+# Progress window for live transcription display
+try:
+    from progress_window import show_progress_window, hide_progress_window, get_progress_window
+    PROGRESS_WINDOW_AVAILABLE = True
+except ImportError:
+    PROGRESS_WINDOW_AVAILABLE = False
+    def show_progress_window(): return None
+    def hide_progress_window(): pass
+    def get_progress_window(): return None
+
 # Supported file extensions for batch processing
 SUPPORTED_EXTS = (
     ".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".wma",
@@ -224,15 +234,33 @@ def run_batch_transcription(paths: List[str], outdir_override: Optional[str], ou
     successful = 0
     failed = 0
 
+    # Update progress window for batch
+    progress_win = get_progress_window() if PROGRESS_WINDOW_AVAILABLE else None
+    if progress_win:
+        progress_win.set_file_progress(0, total)
+
     for idx, p in enumerate(paths, start=1):
         output_queue.put("\n[{} / {}] Processing: {}\n".format(idx, total, os.path.basename(p)))
+        
+        # Update progress window
+        if progress_win:
+            progress_win.set_file(p)
+            progress_win.set_file_progress(idx, total)
+            progress_win.set_status("Transcribing...")
+            progress_win.set_progress(0)
+        
         try:
             run_transcription(p, outdir_override, output_queue, threads_override=threads_override)
             successful += 1
+            if progress_win:
+                progress_win.set_status("Complete")
+                progress_win.set_progress(100)
         except Exception as e:
             failed += 1
             output_queue.put("Failed to process '{}': {}\n".format(os.path.basename(p), str(e)))
             output_queue.put("Continuing with next file...\n")
+            if progress_win:
+                progress_win.set_status("Failed")
 
     output_queue.put("\nBatch processing complete!\n")
     output_queue.put("Successfully processed: {} files\n".format(successful))
@@ -454,40 +482,60 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         max_repeat_var = tk.IntVar(value=proj_settings.get("max_repeat_cap", 3))
         tk.Spinbox(combined_frame, from_=1, to=10, textvariable=max_repeat_var, width=5, bg='#f9fafb', fg='#111827', relief='flat').grid(column=3, row=9, sticky='w', padx=(6, 20), pady=(0, 6))
 
-        # Row 9b: Model selection (large-v3-turbo vs large-v3)
-        tk.Label(combined_frame, text="Whisper Model:", bg='white', fg='#374151', font=('Segoe UI', 10, 'bold')).grid(column=0, row=10, sticky='w', padx=20, pady=(8, 6))
-        model_choice_var = tk.StringVar(value=proj_settings.get("whisper_model", "large-v3-turbo"))  # Default to turbo for speed
+        # Row 9b: Model selection - expanded with multiple backends
+        tk.Label(combined_frame, text="Transcription Model:", bg='white', fg='#374151', font=('Segoe UI', 10, 'bold')).grid(column=0, row=10, sticky='w', padx=20, pady=(8, 6))
+        
+        # Available models with descriptions
+        MODEL_OPTIONS = [
+            ("large-v3-turbo", "Whisper large-v3-turbo (fast, good accuracy)"),
+            ("large-v3", "Whisper large-v3 (best accuracy, slower)"),
+            ("faster-whisper-large-v3", "Faster-Whisper large-v3 (4x faster, same accuracy)"),
+            ("faster-whisper-large-v3-turbo", "Faster-Whisper turbo (fastest local)"),
+            ("distil-whisper-large-v3", "Distil-Whisper large-v3 (6x faster, English-only)"),
+            ("insanely-fast-whisper", "Insanely-Fast-Whisper (GPU optimized, batched)"),
+        ]
+        
+        model_choice_var = tk.StringVar(value=proj_settings.get("whisper_model", "large-v3-turbo"))
         
         model_frame = tk.Frame(combined_frame, bg='white')
         model_frame.grid(column=1, row=10, columnspan=3, sticky='w', padx=(12, 20), pady=(8, 6))
         
-        tk.Radiobutton(
-            model_frame, 
-            text="large-v3-turbo (faster, realtime capable)", 
-            variable=model_choice_var, 
-            value="large-v3-turbo",
-            bg='white', 
-            fg='#374151', 
-            selectcolor='white', 
-            activebackground='white',
-            font=('Segoe UI', 9)
-        ).pack(side='left', padx=(0, 20))
+        # Create dropdown/combobox for model selection
+        model_values = [opt[1] for opt in MODEL_OPTIONS]
+        model_keys = [opt[0] for opt in MODEL_OPTIONS]
         
-        tk.Radiobutton(
-            model_frame, 
-            text="large-v3 (more accurate, slower)", 
-            variable=model_choice_var, 
-            value="large-v3",
-            bg='white', 
-            fg='#374151', 
-            selectcolor='white', 
-            activebackground='white',
+        def get_model_display(key):
+            for k, v in MODEL_OPTIONS:
+                if k == key:
+                    return v
+            return MODEL_OPTIONS[0][1]
+        
+        def get_model_key(display):
+            for k, v in MODEL_OPTIONS:
+                if v == display:
+                    return k
+            return MODEL_OPTIONS[0][0]
+        
+        model_display_var = tk.StringVar(value=get_model_display(model_choice_var.get()))
+        
+        model_combo = ttk.Combobox(
+            model_frame,
+            textvariable=model_display_var,
+            values=model_values,
+            state='readonly',
+            width=50,
             font=('Segoe UI', 9)
-        ).pack(side='left')
+        )
+        model_combo.pack(side='left', padx=(0, 10))
+        
+        def on_model_change(event=None):
+            model_choice_var.set(get_model_key(model_display_var.get()))
+        
+        model_combo.bind('<<ComboboxSelected>>', on_model_change)
 
         # Row 11: Compact description
         desc = (
-            "Auto device (CUDA/DirectML/CPU) • Direct audio • RAM-optimized threads\n"
+            "Auto device (CUDA/DirectML/CPU) • Faster-Whisper/Distil-Whisper for speed\n"
             "Outputs saved next to source file(s)."
         )
         ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=11, columnspan=4, sticky='w', padx=20, pady=(8, 16))
@@ -518,21 +566,90 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         log_text.tag_configure("info", foreground="#60a5fa")
 
         q = queue.Queue()
+        last_progress_line = [""]  # Track last progress line for in-place updates
 
         def format_log_message(msg: str) -> str:
+            """Format log message, handling progress bar updates."""
             return msg
+
+        def is_progress_line(msg: str) -> bool:
+            """Check if message is a progress bar update (contains progress indicators)."""
+            # Detect tqdm-style progress bars and our custom progress bars
+            progress_indicators = ['%|', '█', '░', '/s]', 'iB/s', 'frames/s', 'it/s']
+            return any(ind in msg for ind in progress_indicators)
 
         def poll_queue():
             try:
                 while True:
                     msg = q.get_nowait()
                     log_text.configure(state='normal')
-                    log_text.insert('end', format_log_message(msg))
+                    
+                    # Handle carriage return (in-place update) messages
+                    if msg.startswith('\r'):
+                        msg = msg.lstrip('\r')
+                        # If it's a progress update, replace the last line
+                        if is_progress_line(msg) or is_progress_line(last_progress_line[0]):
+                            # Delete the last line if it was a progress line
+                            if last_progress_line[0]:
+                                try:
+                                    log_text.delete("end-2l", "end-1l")
+                                except:
+                                    pass
+                    
+                    # Update progress window with transcribed text
+                    # Transcribed text lines start with spaces (e.g., "   Some transcribed words...")
+                    if PROGRESS_WINDOW_AVAILABLE and msg.startswith('   ') and len(msg.strip()) > 5:
+                        try:
+                            pw = get_progress_window()
+                            if pw:
+                                pw.set_text(msg.strip())
+                        except:
+                            pass
+                    
+                    # Update progress bar from segment completion messages
+                    # e.g., "📊 Completed 10/50 segments" or "📊 Processed 5 segments..."
+                    if PROGRESS_WINDOW_AVAILABLE and 'Completed' in msg and 'segments' in msg:
+                        try:
+                            import re
+                            match = re.search(r'(\d+)/(\d+)\s+segments', msg)
+                            if match:
+                                completed = int(match.group(1))
+                                total = int(match.group(2))
+                                percent = (completed / total * 100) if total > 0 else 0
+                                pw = get_progress_window()
+                                if pw:
+                                    pw.set_progress(percent)
+                        except:
+                            pass
+                    
+                    # Skip noisy tqdm intermediate updates (keep only significant ones)
+                    if is_progress_line(msg):
+                        # Only show progress at 0%, 25%, 50%, 75%, 100% or if it's our clean format
+                        if '█' in msg and '░' in msg:
+                            # Our clean progress bar - always show
+                            pass
+                        elif any(p in msg for p in ['0%|', '25%|', '50%|', '75%|', '100%|', '100%']):
+                            # Milestone progress - show
+                            pass
+                        elif msg.strip().endswith(('Complete', 'completed', '✓', 'done')):
+                            # Completion message - show
+                            pass
+                        else:
+                            # Skip intermediate tqdm updates
+                            last_progress_line[0] = msg
+                            log_text.configure(state='disabled')
+                            continue
+                    
+                    # Filter out pure whitespace and redundant newlines
+                    if msg.strip() or msg == '\n':
+                        log_text.insert('end', format_log_message(msg))
+                        last_progress_line[0] = msg if is_progress_line(msg) else ""
+                    
                     log_text.see('end')
                     log_text.configure(state='disabled')
             except queue.Empty:
                 pass
-            root.after(200, poll_queue)
+            root.after(100, poll_queue)  # Faster polling for smoother progress
 
         def start_transcription_thread():
             inp = input_var.get().strip()
@@ -618,6 +735,14 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                     except Exception:
                         pass
 
+                    # Show progress window
+                    progress_win = None
+                    if PROGRESS_WINDOW_AVAILABLE:
+                        try:
+                            progress_win = show_progress_window()
+                        except Exception as pw_err:
+                            q.put(f"Note: Progress window unavailable: {pw_err}\n")
+
                     if os.path.isdir(inp):
                         def _is_supported(filename: str) -> bool:
                             return os.path.splitext(filename)[1].lower() in SUPPORTED_EXTS
@@ -667,7 +792,15 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                                 q.put(f"{skipped} file(s) skipped due to existing outputs.\n")
                             run_batch_transcription(files, outdir_override=None, output_queue=q, threads_override=thr)
                     else:
+                        # Single file - update progress window
+                        if progress_win:
+                            progress_win.set_file(inp)
+                            progress_win.set_file_progress(1, 1)
+                            progress_win.set_status("Transcribing...")
                         run_transcription(inp, outdir=None, output_queue=q, threads_override=thr)
+                        if progress_win:
+                            progress_win.set_status("Complete")
+                            progress_win.set_progress(100)
                     q.put("Transcription process finished!\n")
                 except Exception as e:
                     import traceback
@@ -675,6 +808,12 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                 finally:
                     sys.stdout = old_out
                     sys.stderr = old_err
+                    # Hide progress window
+                    if PROGRESS_WINDOW_AVAILABLE:
+                        try:
+                            hide_progress_window()
+                        except:
+                            pass
                     root.after(0, lambda: run_btn.configure(state='normal'))
 
             threading.Thread(target=worker, daemon=True).start()

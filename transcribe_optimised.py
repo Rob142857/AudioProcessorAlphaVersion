@@ -8,7 +8,12 @@ import re
 import json
 warnings.filterwarnings("ignore", category=UserWarning, module="webrtcvad")
 
+# Suppress verbose tqdm progress bars from transformers/huggingface
 import os
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "0")  # Keep minimal progress
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "warning")  # Reduce transformer logs
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")  # Avoid tokenizer warnings
+
 import sys
 import time
 import gc
@@ -31,7 +36,6 @@ except Exception as e:  # pragma: no cover
     np = None  # type: ignore
     _torch_import_error = e
     _torch_available = False
-
 
 def _ensure_torch_available():
     if torch is None:
@@ -65,14 +69,14 @@ def _apply_recommended_env_defaults() -> None:
     """
     defaults = {
         # Fidelity & formatting
-        "TRANSCRIBE_VERBATIM": "1",            # Keep raw Whisper text by default
-        "TRANSCRIBE_PARAGRAPH_GAP": "1.2",     # Silence gap (seconds) for paragraph breaks
+        "TRANSCRIBE_VERBATIM": "0",            # Enable post-processing for better punctuation/formatting
+        "TRANSCRIBE_PARAGRAPH_GAP": "1.5",     # Silence gap (seconds) for paragraph breaks (slightly longer for clearer breaks)
         # Model selection
-        "TRANSCRIBE_MODEL_NAME": "large-v3",   # Accuracy-first; GPU preflight will fallback if needed
+        "TRANSCRIBE_MODEL_NAME": "large-v3-turbo",   # Turbo model for good speed/accuracy balance
         # GPU safety / fragmentation mitigation
         "TRANSCRIBE_GPU_FRACTION": "0.92",     # Leave headroom instead of 0.99 to reduce OOM risk
-        # Processing feature toggles (opt-in)
-        "TRANSCRIBE_QUALITY_MODE": "0",        # Beam search disabled unless explicitly enabled
+        # Processing feature toggles - QUALITY MODE ENABLED BY DEFAULT
+        "TRANSCRIBE_QUALITY_MODE": "1",        # Beam search ENABLED for better accuracy
         "TRANSCRIBE_PREPROC_STRONG_FILTERS": "0", # Conservative audio preprocessing
         "TRANSCRIBE_USE_DATASET": "0",         # Disable external segmentation by default
         "TRANSCRIBE_VAD": "0",                 # Disable VAD unless needed
@@ -81,6 +85,8 @@ def _apply_recommended_env_defaults() -> None:
         "TRANSCRIBE_FORCE_FP16": "0",          # Stability over memory unless user demands
         # Perf mode off (user can enable for aggressive thread tweaks)
         "TRANSCRIBE_MAX_PERF": "0",
+        # Allow domain-specific prompts for better word recognition
+        "TRANSCRIBE_ALLOW_PROMPT": "1",        # Enable initial_prompt from special_words.txt
     }
     alloc_conf_default = "expandable_segments:True,max_split_size_mb:64"
     for k, v in defaults.items():
@@ -575,6 +581,59 @@ _ARTIFACT_INLINE_PATTERNS = [
     r"no part of this recording may be reproduced[^\n\.]*",
 ]
 
+# Music/hallucination patterns - repetitive vocalisations during music sections
+_MUSIC_HALLUCINATION_PATTERNS = [
+    # "Oh, oh, oh" or "Oh, Oh, Oh" patterns (common during music)
+    r"\bOh,?\s*oh,?\s*oh[,\s]*(?:oh[,\s]*)*",
+    # "I'm here" repeated (hallucination during silence/music)
+    r"(?:I'm here,?\s*)+I'm here",
+    # "Let's go" repeated
+    r"(?:Let's go\.?\s*)+(?:Let's go\.?)?",
+    # "my God" repetitions
+    r"(?:my God,?\s*)+my God",
+    # Generic la-la-la vocalisation
+    r"(?:la,?\s*)+la\b",
+    # "da da da" patterns
+    r"(?:da,?\s*)+da\b",
+    # Thank you repeated
+    r"(?:Thank you\.?\s*)+(?:Thank you\.?)?",
+    # End-of-recording hallucinations
+    r"\bThank you,?\s*the end\.?",
+    r"\bThe end,?\s*I'm sorry[^.]*\.",
+    r"\bI\s*'?\s*m going to go\.?",
+    r"\bI\s+I\s*'?\s*m\b",  # "I I 'm" stutter patterns
+    r"\bI\s+ca\s*n'?t\s+worry[^.]*\.",
+    r"(?:I'm sorry[,.]?\s*)+",  # repeated "I'm sorry"
+    # "the end I" pattern (common artifact)
+    r"\bthe end I\.?\s*",
+    r"-\s*the end I\.?\s*",
+    r"\binto that-\s*the end I\.?",  # specific pattern from this recording
+    # End-of-recording nonsense patterns
+    r"\bThe end\.\s*Namajipa[^.]*\.",  # gibberish names
+    r"\bThe end\.\s*Let me go\.?",
+    r"\bI can just be all right tonight\.?\s*The end\.?",
+    r"\bNamajipa\s+jirapare\.?",  # gibberish
+    r"\bLet me go\.\s*$",  # trailing "Let me go"
+]
+
+def _remove_music_hallucinations(text: str) -> tuple[str, int]:
+    """Remove common Whisper hallucinations during music/silence sections.
+    
+    Returns (cleaned_text, count_of_removals).
+    """
+    removed_count = 0
+    for pattern in _MUSIC_HALLUCINATION_PATTERNS:
+        new_text, n = re.subn(pattern, "", text, flags=re.IGNORECASE)
+        if n:
+            removed_count += n
+            text = new_text
+    
+    # Clean up any double spaces left behind
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'\s+([,.!?])', r'\1', text)  # Fix space before punctuation
+    
+    return text.strip(), removed_count
+
 def _remove_extended_artifacts(text: str) -> tuple[str, dict]:
     """Remove broader watermark/prompt/copyright artifact lines.
 
@@ -685,9 +744,28 @@ def _fix_whisper_artifacts(text: str) -> str:
     Based on turbo/large-v3 comparison testing:
     - Removes double periods (. .)
     - Fixes dialogue punctuation inconsistencies
+    - Fixes contraction spacing (let 's -> let's)
     - Improves sentence boundary detection
     """
     try:
+        # Fix contraction spacing artifacts (very common in Whisper output)
+        # Pattern: word + space + apostrophe + letters (e.g., "let 's" -> "let's")
+        contraction_fixes = [
+            (r"\b(\w+)\s+'s\b", r"\1's"),      # let 's -> let's, it 's -> it's
+            (r"\b(\w+)\s+'d\b", r"\1'd"),      # I 'd -> I'd, we 'd -> we'd
+            (r"\b(\w+)\s+'ll\b", r"\1'll"),    # I 'll -> I'll, we 'll -> we'll
+            (r"\b(\w+)\s+'ve\b", r"\1've"),    # I 've -> I've, we 've -> we've
+            (r"\b(\w+)\s+'re\b", r"\1're"),    # we 're -> we're, you 're -> you're
+            (r"\b(\w+)\s+'m\b", r"\1'm"),      # I 'm -> I'm
+            (r"\b(\w+)\s+n't\b", r"\1n't"),    # do n't -> don't, ca n't -> can't
+            (r"\bI\s+'m\b", r"I'm"),           # Special case for I 'm
+            (r"\bI\s+'d\b", r"I'd"),           # Special case for I 'd
+            (r"\bI\s+'ll\b", r"I'll"),         # Special case for I 'll
+            (r"\bI\s+'ve\b", r"I've"),         # Special case for I 've
+        ]
+        for pattern, replacement in contraction_fixes:
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+        
         # Fix double periods (common artifact in both models)
         text = re.sub(r'\.\s*\.+', '.', text)
         
@@ -1045,12 +1123,15 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
     quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
     if quality_mode:
         if selected_model_name == "large-v3-turbo":
-            seg_kwargs["beam_size"] = 7
-            seg_kwargs["patience"] = 2.5
-            seg_kwargs["best_of"] = 5
+            seg_kwargs["beam_size"] = 10
+            seg_kwargs["patience"] = 3.0
+            seg_kwargs["best_of"] = 10
+            seg_kwargs["temperature"] = 0.0
         else:
-            seg_kwargs["beam_size"] = 5
-            seg_kwargs["patience"] = 2.0
+            seg_kwargs["beam_size"] = 10
+            seg_kwargs["patience"] = 3.0
+            seg_kwargs["best_of"] = 10
+            seg_kwargs["temperature"] = 0.0
     
     # Only allow domain bias when explicitly enabled
     if initial_prompt and str(os.environ.get("TRANSCRIBE_ALLOW_PROMPT", "0")).lower() in ("1","true","yes"):
@@ -1809,6 +1890,8 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     transcription_result = None
     transcription_error = None
     using_fw = False
+    using_distil = False
+    using_insanely_fast = False
 
     _ensure_torch_available()
     torch_api = cast(Any, torch)
@@ -1928,18 +2011,16 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     
     config = get_maximum_hardware_config(max_perf=max_perf)
     config['disable_vad'] = disable_vad
-    # Report planning
+    
+    # Compact hardware config summary
     try:
-        if config.get('max_perf'):
-            print(f"🧠 Planning: ULTRA MAX PERF -> CPU threads {config['cpu_threads']} of {config['cpu_cores']} (ULTRA OPTIMISED)")
-        else:
-            print(f"🧠 Planning: CPU threads ≈95% cores -> {config['cpu_threads']} of {config['cpu_cores']} (OPTIMIZED)")
-        print(f"💾 RAM plan: using up to ~{config['usable_ram_gb']:.1f} GB (98% of {config['available_ram_gb']:.1f} GB available - ULTRA OPTIMISED)")
+        gpu_info = ""
         if float(config.get('allowed_vram_gb') or 0) > 0:
-            print(f"🎛️ VRAM cap: ~{float(config['allowed_vram_gb']):.1f} GB of total {float(config.get('cuda_total_vram_gb') or 0):.1f} GB (99% utilization)")
-            print(f"🔗 GPU Shared Memory: Utilizing additional 15GB+ for parallel processing")
+            gpu_info = f" | GPU: {float(config['allowed_vram_gb']):.1f}GB VRAM"
+        print(f"⚙️  Config: {config['cpu_threads']} threads, {config['usable_ram_gb']:.1f}GB RAM{gpu_info}")
     except Exception:
         pass
+        
     if not output_dir:
         output_dir = os.path.dirname(input_path)
 
@@ -1973,23 +2054,51 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     
     # Check for model selection from environment variable (set by GUI)
     selected_model_name = os.environ.get("TRANSCRIBE_MODEL_NAME", "large-v3")
+    
+    # Parse model name to determine backend and actual model
+    # Format: "backend-modelname" or just "modelname" (default to native whisper)
+    backend = "native"  # Default backend
+    actual_model_name = selected_model_name
+    
+    if selected_model_name.startswith("faster-whisper-"):
+        backend = "faster-whisper"
+        actual_model_name = selected_model_name.replace("faster-whisper-", "")
+        print(f"🚀 Backend: Faster-Whisper (CTranslate2) - 4x faster")
+    elif selected_model_name.startswith("distil-whisper-"):
+        backend = "distil-whisper"
+        actual_model_name = "distil-whisper/distil-large-v3"  # HuggingFace model ID
+        print(f"🚀 Backend: Distil-Whisper (HuggingFace) - 6x faster, English-only")
+    elif selected_model_name == "insanely-fast-whisper":
+        backend = "insanely-fast-whisper"
+        actual_model_name = "openai/whisper-large-v3"  # Uses HF pipeline with optimizations
+        print(f"🚀 Backend: Insanely-Fast-Whisper (Flash Attention + Batching)")
+    else:
+        print(f"🎯 Backend: Native OpenAI Whisper")
+    
+    # Store original for logging
+    original_model_selection = selected_model_name
+    selected_model_name = actual_model_name
 
     # Prefer selected model; if it's not listed as available, fall back to the next best
-    try:
-        import whisper  # type: ignore
-        avail = set(whisper.available_models())
-        requested_available = (selected_model_name in avail)
-        if not requested_available:
-            print(f"⚠️  Requested model '{selected_model_name}' not available, falling back...")
-            for cand in ("large-v3", "large-v2", "large"):
-                if cand in avail:
-                    selected_model_name = cand
-                    break
-        print(f"🧩 Requested model available: {requested_available}")
-        print(f"🗂️  Selecting model: {selected_model_name}")
-        print(f"🎯 Model Source: Environment variable TRANSCRIBE_MODEL_NAME = '{os.environ.get('TRANSCRIBE_MODEL_NAME', 'NOT SET')}'")
-    except Exception as e:
-        print(f"⚠️  Could not query whisper.available_models(): {e}. Proceeding with '{selected_model_name}'.")
+    # (Only applies to native whisper backend)
+    if backend == "native":
+        try:
+            import whisper  # type: ignore
+            avail = set(whisper.available_models())
+            requested_available = (selected_model_name in avail)
+            if not requested_available:
+                print(f"⚠️  Requested model '{selected_model_name}' not available, falling back...")
+                for cand in ("large-v3", "large-v2", "large"):
+                    if cand in avail:
+                        selected_model_name = cand
+                        break
+            print(f"🧩 Requested model available: {requested_available}")
+            print(f"🗂️  Selecting model: {selected_model_name}")
+            print(f"🎯 Model Source: Environment variable TRANSCRIBE_MODEL_NAME = '{os.environ.get('TRANSCRIBE_MODEL_NAME', 'NOT SET')}'")
+        except Exception as e:
+            print(f"⚠️  Could not query whisper.available_models(): {e}. Proceeding with '{selected_model_name}'.")
+    else:
+        print(f"🗂️  Model: {selected_model_name} (via {backend} backend)")
 
     try:
         # Elevate process priority on Windows for max perf
@@ -2090,18 +2199,97 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             if not alloc_conf:
                 # Provide sane defaults with expandable segments unless user overrides
                 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:64"
-            backend = os.environ.get("TRANSCRIBE_BACKEND", "native").lower()
-            # Auto-switch to faster-whisper for large models on low-VRAM GPUs
+            
+            # Use the backend determined from model name parsing above
+            # Auto-switch to faster-whisper for large models on low-VRAM GPUs (only if native)
             if backend == "native" and total_vram <= 8 and selected_model_name in ["large-v3", "large-v3-turbo"]:
                 backend = "faster-whisper"
                 print(f"🎯 Auto-switching to faster-whisper backend for {selected_model_name} on {total_vram:.1f}GB GPU")
+            
             using_fw = False
-            if backend == "faster-whisper":
+            using_distil = False
+            using_insanely_fast = False
+            
+            # === DISTIL-WHISPER BACKEND ===
+            if backend == "distil-whisper":
+                try:
+                    from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+                    
+                    print(f"🔄 Loading Distil-Whisper model: {selected_model_name}")
+                    
+                    # Determine compute type
+                    torch_dtype = torch_api.float16 if torch_api.cuda.is_available() else torch_api.float32
+                    
+                    distil_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                        selected_model_name,
+                        torch_dtype=torch_dtype,
+                        low_cpu_mem_usage=True,
+                        use_safetensors=True
+                    )
+                    distil_model.to("cuda" if torch_api.cuda.is_available() else "cpu")
+                    
+                    distil_processor = AutoProcessor.from_pretrained(selected_model_name)
+                    
+                    # Create pipeline
+                    model = pipeline(
+                        "automatic-speech-recognition",
+                        model=distil_model,
+                        tokenizer=distil_processor.tokenizer,
+                        feature_extractor=distil_processor.feature_extractor,
+                        torch_dtype=torch_dtype,
+                        device="cuda" if torch_api.cuda.is_available() else "cpu",
+                    )
+                    using_distil = True
+                    print(f"✅ Distil-Whisper loaded successfully")
+                except Exception as distil_e:
+                    print(f"⚠️  Distil-Whisper load failed: {distil_e}")
+                    print("🔄 Falling back to native Whisper...")
+                    backend = "native"
+            
+            # === INSANELY-FAST-WHISPER BACKEND ===
+            elif backend == "insanely-fast-whisper":
+                try:
+                    from transformers import pipeline
+                    
+                    print(f"🔄 Loading Insanely-Fast-Whisper: {selected_model_name}")
+                    
+                    # Use Flash Attention 2 if available
+                    model_kwargs = {"use_flash_attention_2": True} if torch_api.cuda.is_available() else {}
+                    
+                    model = pipeline(
+                        "automatic-speech-recognition",
+                        model=selected_model_name,
+                        torch_dtype=torch_api.float16 if torch_api.cuda.is_available() else torch_api.float32,
+                        device="cuda" if torch_api.cuda.is_available() else "cpu",
+                        model_kwargs=model_kwargs,
+                    )
+                    using_insanely_fast = True
+                    print(f"✅ Insanely-Fast-Whisper loaded with Flash Attention")
+                except Exception as isf_e:
+                    print(f"⚠️  Insanely-Fast-Whisper load failed: {isf_e}")
+                    # Try without flash attention
+                    try:
+                        model = pipeline(
+                            "automatic-speech-recognition",
+                            model=selected_model_name,
+                            torch_dtype=torch_api.float16 if torch_api.cuda.is_available() else torch_api.float32,
+                            device="cuda" if torch_api.cuda.is_available() else "cpu",
+                        )
+                        using_insanely_fast = True
+                        print(f"✅ Insanely-Fast-Whisper loaded (without Flash Attention)")
+                    except Exception as isf_e2:
+                        print(f"⚠️  Insanely-Fast-Whisper fallback also failed: {isf_e2}")
+                        print("🔄 Falling back to native Whisper...")
+                        backend = "native"
+            
+            # === FASTER-WHISPER BACKEND ===
+            elif backend == "faster-whisper":
                 try:
                     from faster_whisper import WhisperModel  # type: ignore
                 except Exception as fw_imp_e:
                     print(f"⚠️  faster-whisper import failed ({fw_imp_e}); falling back to native backend")
                     backend = "native"
+                    
             if backend == "faster-whisper":
                 pref_raw = os.environ.get("TRANSCRIBE_FW_COMPUTE_TYPES", "auto,int8,float16")
                 compute_order = [c.strip() for c in pref_raw.split(',') if c.strip()]
@@ -2286,12 +2474,53 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     transcription_error = None
 
     def _run_transcribe():
-        nonlocal transcription_complete, transcription_result, transcription_error, use_vad, using_fw
+        nonlocal transcription_complete, transcription_result, transcription_error, use_vad, using_fw, using_distil, using_insanely_fast
         try:
-            print("🔄 Starting Whisper transcription process...")
+            print("🔄 Starting transcription process...")
             if model is None:
-                raise RuntimeError("Whisper model is not loaded")
+                raise RuntimeError("Transcription model is not loaded")
 
+            # === DISTIL-WHISPER or INSANELY-FAST-WHISPER (HuggingFace Pipeline) ===
+            if using_distil or using_insanely_fast:
+                backend_name = "Distil-Whisper" if using_distil else "Insanely-Fast-Whisper"
+                print(f"🎯 Using {backend_name} pipeline for transcription...")
+                
+                # HuggingFace pipeline transcription
+                pipeline_kwargs = {
+                    "return_timestamps": True,
+                    "chunk_length_s": 30,
+                    "batch_size": 16 if using_insanely_fast else 8,  # Larger batches for insanely-fast
+                }
+                
+                # Add language hint
+                generate_kwargs = {"language": "en", "task": "transcribe"}
+                
+                result = model(working_input_path, generate_kwargs=generate_kwargs, **pipeline_kwargs)
+                
+                # Convert to standard format
+                if isinstance(result, dict):
+                    text = result.get("text", "")
+                    chunks = result.get("chunks", [])
+                    segments = []
+                    for chunk in chunks:
+                        if isinstance(chunk, dict):
+                            seg_text = chunk.get("text", "")
+                            timestamps = chunk.get("timestamp", (0, 0))
+                            if timestamps and len(timestamps) >= 2:
+                                segments.append({
+                                    "text": seg_text,
+                                    "start": timestamps[0] or 0,
+                                    "end": timestamps[1] or 0,
+                                })
+                    transcription_result = {"text": text, "segments": segments}
+                else:
+                    transcription_result = {"text": str(result), "segments": []}
+                
+                print(f"✅ {backend_name} transcription completed")
+                transcription_complete = True
+                return
+
+            # === NATIVE WHISPER / FASTER-WHISPER ===
             # Apply VAD segmentation if enabled
             transcribe_kwargs = {
                 "language": "en",  # Optimized for English language
@@ -2321,16 +2550,23 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             quality_mode = os.environ.get("TRANSCRIBE_QUALITY_MODE", "").strip() in ("1", "true", "True")
             if quality_mode:
                 if selected_model_name == "large-v3-turbo":
-                    # Turbo with quality mode: optimised beam search for max accuracy
-                    transcribe_kwargs["beam_size"] = 7  # Wider search (was 5)
-                    transcribe_kwargs["patience"] = 2.5  # More patience (was 2.0)
-                    transcribe_kwargs["best_of"] = 5  # Try multiple candidates
-                    print("🎯 Quality mode (turbo): beam_size=7, patience=2.5, best_of=5")
+                    # Turbo with MAXIMUM quality mode: aggressive beam search for best accuracy
+                    transcribe_kwargs["beam_size"] = 10  # Maximum beam width
+                    transcribe_kwargs["patience"] = 3.0  # Maximum patience
+                    transcribe_kwargs["best_of"] = 10  # Try many candidates
+                    transcribe_kwargs["temperature"] = 0.0  # Greedy decoding for consistency
+                    transcribe_kwargs["compression_ratio_threshold"] = 2.8  # More lenient
+                    transcribe_kwargs["no_speech_threshold"] = 0.4  # Less aggressive silence detection
+                    print("🎯 ULTRA Quality mode (turbo): beam_size=10, patience=3.0, best_of=10, temp=0")
                 else:
-                    # Large-v3 with quality mode: standard beam search
-                    transcribe_kwargs["beam_size"] = 5
-                    transcribe_kwargs["patience"] = 2.0
-                    print("🎯 Quality mode (large-v3): beam_size=5, patience=2.0")
+                    # Large-v3 with maximum quality mode
+                    transcribe_kwargs["beam_size"] = 10
+                    transcribe_kwargs["patience"] = 3.0
+                    transcribe_kwargs["best_of"] = 10
+                    transcribe_kwargs["temperature"] = 0.0
+                    transcribe_kwargs["compression_ratio_threshold"] = 2.8
+                    transcribe_kwargs["no_speech_threshold"] = 0.4
+                    print("🎯 ULTRA Quality mode (large-v3): beam_size=10, patience=3.0, best_of=10, temp=0")
             
             # Tune defaults when using faster-whisper to avoid over-pruning
             if using_fw:
@@ -2480,53 +2716,61 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     transcribe_thread.start()
 
     start_watch = time.time()
-    # No timeout - let transcription complete naturally
-    print(f"⏱️  Monitoring transcription progress (no timeout)...")
-
+    print(f"🎙️  Transcribing audio...")
 
     # Initialize CPU/RAM monitoring
     import psutil
     process = psutil.Process(os.getpid())
+    last_status_time = 0
+    status_interval = 10  # Update status every 10 seconds
 
     while not transcription_complete:
-        time.sleep(5)
-        if torch_api.cuda.is_available() and chosen_device == "cuda":
-            try:
-                used = torch_api.cuda.memory_allocated() / (1024 ** 3)
-                total = torch_api.cuda.get_device_properties(0).total_memory / (1024 ** 3)
-                pct = (used / total) * 100
-                elapsed = time.time() - start_watch
-
-                # Get CPU and RAM usage
-                cpu_percent = process.cpu_percent(interval=None)
-                ram_used = process.memory_info().rss / (1024 ** 3)  # GB
-                ram_total = psutil.virtual_memory().total / (1024 ** 3)  # GB
-                ram_percent = (ram_used / ram_total) * 100
-
-                # Format time: use h:m:s after 800 seconds
-                if elapsed >= 800:
-                    hours = int(elapsed // 3600)
-                    minutes = int((elapsed % 3600) // 60)
-                    seconds = int(elapsed % 60)
-                    time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-                else:
-                    time_str = f"{elapsed:.0f}s"
-
-                util_txt = ""
-                if nvml is not None:
-                    try:
-                        h = nvml.nvmlDeviceGetHandleByIndex(0)
-                        util = nvml.nvmlDeviceGetUtilizationRates(h)
-                        util_txt = f" | GPU Util: {util.gpu}% | Mem Util: {util.memory}%"
-                    except Exception:
-                        util_txt = ""
-
-                print(f"📊 Progress: {time_str} | GPU Mem: {used:.1f}/{total:.1f}GB ({pct:.1f}%) | CPU: {cpu_percent:.1f}% | RAM: {ram_used:.1f}/{ram_total:.1f}GB ({ram_percent:.1f}%){util_txt}")
-
-                if pct > 95:
-                    torch_api.cuda.empty_cache()
-            except Exception as e:
-                print(f"⚠️  GPU monitoring error: {e}")
+        time.sleep(2)
+        elapsed = time.time() - start_watch
+        
+        # Only print status updates periodically to reduce log spam
+        if elapsed - last_status_time >= status_interval:
+            last_status_time = elapsed
+            
+            # Format elapsed time
+            if elapsed >= 60:
+                mins = int(elapsed // 60)
+                secs = int(elapsed % 60)
+                time_str = f"{mins}:{secs:02d}"
+            else:
+                time_str = f"{elapsed:.0f}s"
+            
+            if torch_api.cuda.is_available() and chosen_device == "cuda":
+                try:
+                    used = torch_api.cuda.memory_allocated() / (1024 ** 3)
+                    total = torch_api.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+                    gpu_pct = (used / total) * 100
+                    
+                    # Build compact status line
+                    status = f"⏳ Transcribing: {time_str} | GPU: {gpu_pct:.0f}%"
+                    
+                    # Add GPU utilization if available
+                    if nvml is not None:
+                        try:
+                            h = nvml.nvmlDeviceGetHandleByIndex(0)
+                            util = nvml.nvmlDeviceGetUtilizationRates(h)
+                            status += f" (util: {util.gpu}%)"
+                        except:
+                            pass
+                    
+                    print(status)
+                    
+                    if gpu_pct > 95:
+                        torch_api.cuda.empty_cache()
+                except Exception as e:
+                    print(f"⏳ Transcribing: {time_str}")
+            else:
+                # CPU mode - simpler status
+                try:
+                    cpu_pct = process.cpu_percent(interval=None)
+                    print(f"⏳ Transcribing: {time_str} | CPU: {cpu_pct:.0f}%")
+                except:
+                    print(f"⏳ Transcribing: {time_str}")
 
     # No timeout fallback - transcription completes naturally
     if transcription_error:
@@ -2651,6 +2895,10 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 t0 = time.time()
                 ultra_processor = create_ultra_processor(max_workers=text_workers)
                 full_text = _collapse_repetitions(full_text, max_repeats=3)
+                # Remove music/silence hallucinations early (before punctuation restoration)
+                full_text, music_removed = _remove_music_hallucinations(full_text)
+                if music_removed:
+                    print(f"🎵 Removed {music_removed} music/hallucination pattern(s)")
                 try:
                     from deepmultilingualpunctuation import PunctuationModel
                     pm_ultra = PunctuationModel()
@@ -2671,6 +2919,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     "global_frequency": global_freq_stats,
                     "loop_detection": loop_stats,
                     "late_artifacts": late_artifact_stats,
+                    "music_hallucinations_removed": music_removed,
                 }
                 try:
                     paragraph_formatter = create_advanced_paragraph_formatter(max_workers=text_workers)
@@ -2783,9 +3032,9 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
         doc = Document()
         doc.add_heading(f'{base_name}', 0)
         
-        # Add model and location info
+        # Add model and location info (use original selection for clarity)
         parent_folder = os.path.basename(os.path.dirname(input_path))
-        doc.add_paragraph(f'Model: {selected_model_name}')
+        doc.add_paragraph(f'Model: {original_model_selection}')
         doc.add_paragraph(f'Folder: {parent_folder}')
         doc.add_paragraph('')
         
@@ -2804,9 +3053,9 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             doc = Document()
             doc.add_heading(f'Transcription: {base_name}', 0)
             
-            # Add model and location info (fallback)
+            # Add model and location info (fallback - use original selection)
             parent_folder = os.path.basename(os.path.dirname(input_path))
-            doc.add_paragraph(f'Model: {selected_model_name}')
+            doc.add_paragraph(f'Model: {original_model_selection}')
             doc.add_paragraph(f'Folder: {parent_folder}')
             doc.add_paragraph('')
             
