@@ -20,6 +20,10 @@ from typing import Optional, List, Dict, Any
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
+# Set offline mode for Hugging Face to prevent network checks
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 # Optional imports with fallbacks
 try:
     from deepmultilingualpunctuation import PunctuationModel

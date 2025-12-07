@@ -18,7 +18,7 @@ try:
     WEBRTCVAD_AVAILABLE = True
 except ImportError:
     WEBRTCVAD_AVAILABLE = False
-    print("⚠️  webrtcvad not available - Voice Activity Detection disabled")
+    # VAD is optional and disabled by default - no need to warn
 import re
 import time
 import json

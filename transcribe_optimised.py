@@ -11,6 +11,8 @@ warnings.filterwarnings("ignore", category=UserWarning, module="webrtcvad")
 # Suppress verbose tqdm progress bars from transformers/huggingface
 import os
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "0")  # Keep minimal progress
+os.environ.setdefault("HF_HUB_OFFLINE", "1")  # Use cached models only, no network checks
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")  # Transformers also use cached models only
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "warning")  # Reduce transformer logs
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")  # Avoid tokenizer warnings
 
@@ -22,6 +24,34 @@ import argparse
 import multiprocessing
 import threading
 from typing import Any, cast, Optional, Dict
+
+# === MODEL CACHE ===
+# Cache loaded models to avoid expensive reload on each file in batch processing.
+# This prevents GPU memory fragmentation and hangs from repeated CTranslate2 init.
+_MODEL_CACHE: Dict[str, Any] = {}  # key: "backend:model_name:device:compute_type" -> model
+_MODEL_CACHE_LOCK = threading.Lock()
+
+def _get_cached_model(cache_key: str) -> Optional[Any]:
+    """Get model from cache if available."""
+    with _MODEL_CACHE_LOCK:
+        return _MODEL_CACHE.get(cache_key)
+
+def _set_cached_model(cache_key: str, model: Any) -> None:
+    """Store model in cache."""
+    with _MODEL_CACHE_LOCK:
+        _MODEL_CACHE[cache_key] = model
+
+def _clear_model_cache() -> None:
+    """Clear all cached models (call on shutdown or model change)."""
+    with _MODEL_CACHE_LOCK:
+        _MODEL_CACHE.clear()
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except:
+        pass
 
 # IMPORTANT: Import torch once at module import time. Do NOT delete torch.* from sys.modules.
 try:
@@ -1613,8 +1643,7 @@ def vad_segment_times_optimized(input_path, aggressiveness=2, frame_duration_ms=
         webrtcvad = None
 
     if not _vad_available:
-        print("⚠️  webrtcvad not available - using optimized duration-based segmentation")
-        # Fallback: create segments based on duration (every 25 seconds for better performance)
+        # VAD not available - silently use duration-based segmentation (VAD is disabled by default anyway)
         try:
             from moviepy.editor import AudioFileClip
             audio_clip = AudioFileClip(input_path)
@@ -2294,25 +2323,43 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 pref_raw = os.environ.get("TRANSCRIBE_FW_COMPUTE_TYPES", "auto,int8,float16")
                 compute_order = [c.strip() for c in pref_raw.split(',') if c.strip()]
                 load_success = False
-                for idx, ctype in enumerate(compute_order, start=1):
-                    try:
-                        torch_api.cuda.empty_cache(); torch_api.cuda.synchronize()
-                        print(f"🔁 FW Attempt {idx}: compute_type={ctype}")
-                        fw_model = WhisperModel(selected_model_name, device="cuda", compute_type=ctype)
-                        model = fw_model  # type: ignore
+                
+                # Try to get cached model first (avoids reload on each file)
+                for ctype in compute_order:
+                    cache_key = f"faster-whisper:{selected_model_name}:cuda:{ctype}"
+                    cached_model = _get_cached_model(cache_key)
+                    if cached_model is not None:
+                        print(f"♻️  Reusing cached faster-whisper model '{selected_model_name}' (compute_type={ctype})")
+                        fw_model = cached_model
+                        model = fw_model
                         using_fw = True
                         load_success = True
-                        print(f"🎯 faster-whisper model '{selected_model_name}' loaded (compute_type={ctype})")
                         break
-                    except RuntimeError as rte:
-                        if 'out of memory' in str(rte).lower():
-                            print(f"⚠️  FW CUDA OOM on compute_type={ctype}: {rte}")
+                
+                # If not cached, load fresh
+                if not load_success:
+                    for idx, ctype in enumerate(compute_order, start=1):
+                        try:
+                            torch_api.cuda.empty_cache(); torch_api.cuda.synchronize()
+                            print(f"🔁 FW Attempt {idx}: compute_type={ctype}")
+                            fw_model = WhisperModel(selected_model_name, device="cuda", compute_type=ctype)
+                            model = fw_model  # type: ignore
+                            using_fw = True
+                            load_success = True
+                            # Cache the model for reuse
+                            cache_key = f"faster-whisper:{selected_model_name}:cuda:{ctype}"
+                            _set_cached_model(cache_key, fw_model)
+                            print(f"🎯 faster-whisper model '{selected_model_name}' loaded and cached (compute_type={ctype})")
+                            break
+                        except RuntimeError as rte:
+                            if 'out of memory' in str(rte).lower():
+                                print(f"⚠️  FW CUDA OOM on compute_type={ctype}: {rte}")
+                                continue
+                            print(f"⚠️  FW load error (compute_type={ctype}): {rte}")
                             continue
-                        print(f"⚠️  FW load error (compute_type={ctype}): {rte}")
-                        continue
-                    except Exception as e_fw:
-                        print(f"⚠️  FW general error (compute_type={ctype}): {e_fw}")
-                        continue
+                        except Exception as e_fw:
+                            print(f"⚠️  FW general error (compute_type={ctype}): {e_fw}")
+                            continue
                 if not load_success:
                     raise RuntimeError(f"All faster-whisper load attempts failed for '{selected_model_name}'")
             else:

@@ -1,23 +1,27 @@
 """
 Compact Always-On-Top Progress Window for Transcription
 Shows current file, progress bar, and live text output
+
+This version uses a Toplevel window that must be created from the main GUI thread.
 """
 
 import tkinter as tk
 from tkinter import ttk
-import threading
 import queue
-import time
 
 
 class TranscriptionProgressWindow:
-    """Small always-on-top window showing transcription progress."""
+    """Small always-on-top window showing transcription progress.
     
-    def __init__(self):
-        self.root = None
-        self.is_running = False
+    This is a Toplevel window that must be created and managed from the main GUI thread.
+    Use the module-level functions for thread-safe updates.
+    """
+    
+    def __init__(self, parent_root):
+        """Create the progress window as a Toplevel of the parent root."""
+        self.parent_root = parent_root
         self.message_queue = queue.Queue()
-        self._thread = None
+        self.is_visible = False
         
         # State
         self.current_file = ""
@@ -25,65 +29,25 @@ class TranscriptionProgressWindow:
         self.current_text = ""
         self.status = "Idle"
         
-    def start(self):
-        """Start the progress window in a separate thread."""
-        if self.is_running:
-            return
-        self.is_running = True
-        self._thread = threading.Thread(target=self._run_window, daemon=True)
-        self._thread.start()
-        # Give window time to initialize
-        time.sleep(0.2)
-        
-    def stop(self):
-        """Stop and close the progress window."""
-        self.is_running = False
-        if self.root:
-            try:
-                self.root.quit()
-            except:
-                pass
-                
-    def set_file(self, filename: str):
-        """Set the current file being processed."""
-        self.message_queue.put(('file', filename))
-        
-    def set_progress(self, percent: float):
-        """Set progress bar value (0-100)."""
-        self.message_queue.put(('progress', percent))
-        
-    def set_status(self, status: str):
-        """Set status text (e.g., 'Transcribing...', 'Processing...')."""
-        self.message_queue.put(('status', status))
-        
-    def set_text(self, text: str):
-        """Set the current text being output (shows last ~80 chars)."""
-        self.message_queue.put(('text', text))
-        
-    def set_file_progress(self, current: int, total: int):
-        """Set batch progress (e.g., file 3 of 10)."""
-        self.message_queue.put(('batch', (current, total)))
-        
-    def _run_window(self):
-        """Run the tkinter window (called in separate thread)."""
-        self.root = tk.Tk()
-        self.root.title("Transcription Progress")
+        # Create the toplevel window
+        self.window = tk.Toplevel(parent_root)
+        self.window.title("Transcription Progress")
         
         # Always on top, compact size
-        self.root.attributes('-topmost', True)
-        self.root.geometry("500x120")
-        self.root.resizable(True, False)
-        self.root.minsize(400, 120)
+        self.window.attributes('-topmost', True)
+        self.window.geometry("500x120")
+        self.window.resizable(True, False)
+        self.window.minsize(400, 120)
         
         # Dark theme colors
         bg_color = "#2b2b2b"
         fg_color = "#e0e0e0"
         accent_color = "#4a9eff"
         
-        self.root.configure(bg=bg_color)
+        self.window.configure(bg=bg_color)
         
         # Main frame with padding
-        main_frame = tk.Frame(self.root, bg=bg_color, padx=10, pady=8)
+        main_frame = tk.Frame(self.window, bg=bg_color, padx=10, pady=8)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Row 1: File name and batch progress
@@ -174,33 +138,31 @@ class TranscriptionProgressWindow:
         )
         self.text_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
         
-        # Handle close button
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Handle close button - just hide
+        self.window.protocol("WM_DELETE_WINDOW", self.hide)
+        
+        # Start hidden
+        self.window.withdraw()
         
         # Start update loop
-        self._update_loop()
-        
-        try:
-            self.root.mainloop()
-        except:
-            pass
-            
-    def _on_close(self):
-        """Handle window close - just hide it."""
-        self.root.withdraw()
-        
-    def _update_loop(self):
-        """Process message queue and update UI."""
-        if not self.is_running:
-            return
-            
+        self._schedule_update()
+    
+    def _schedule_update(self):
+        """Schedule the next queue check."""
+        if self.parent_root:
+            try:
+                self.parent_root.after(100, self._process_queue)
+            except:
+                pass
+    
+    def _process_queue(self):
+        """Process pending messages from the queue."""
         try:
             while True:
                 try:
                     msg_type, value = self.message_queue.get_nowait()
                     
                     if msg_type == 'file':
-                        # Truncate long filenames
                         display_name = value
                         if len(display_name) > 50:
                             display_name = "..." + display_name[-47:]
@@ -215,7 +177,6 @@ class TranscriptionProgressWindow:
                         self.status_label.config(text=value)
                         
                     elif msg_type == 'text':
-                        # Show last ~70 characters
                         display_text = value.strip()
                         if len(display_text) > 70:
                             display_text = display_text[-70:]
@@ -228,62 +189,81 @@ class TranscriptionProgressWindow:
                         else:
                             self.batch_label.config(text="")
                             
+                    elif msg_type == 'show':
+                        self.window.deiconify()
+                        self.window.lift()
+                        self.is_visible = True
+                        
+                    elif msg_type == 'hide':
+                        self.window.withdraw()
+                        self.is_visible = False
+                        
                 except queue.Empty:
                     break
-                    
-        except Exception as e:
+        except Exception:
             pass
-            
+        
         # Schedule next update
-        if self.is_running and self.root:
-            self.root.after(100, self._update_loop)
+        self._schedule_update()
+    
+    def show(self):
+        """Show the window (thread-safe via queue)."""
+        self.message_queue.put(('show', None))
+    
+    def hide(self):
+        """Hide the window (thread-safe via queue)."""
+        self.message_queue.put(('hide', None))
+        
+    def set_file(self, filename: str):
+        """Set the current file being processed (thread-safe)."""
+        self.message_queue.put(('file', filename))
+        
+    def set_progress(self, percent: float):
+        """Set progress bar value 0-100 (thread-safe)."""
+        self.message_queue.put(('progress', percent))
+        
+    def set_status(self, status: str):
+        """Set status text (thread-safe)."""
+        self.message_queue.put(('status', status))
+        
+    def set_text(self, text: str):
+        """Set the current text being output (thread-safe)."""
+        self.message_queue.put(('text', text))
+        
+    def set_file_progress(self, current: int, total: int):
+        """Set batch progress e.g. file 3 of 10 (thread-safe)."""
+        self.message_queue.put(('batch', (current, total)))
 
 
-# Global instance
+# Global instance - will be set by the main GUI
 _progress_window = None
+_parent_root = None
 
 
-def get_progress_window() -> TranscriptionProgressWindow:
-    """Get or create the global progress window instance."""
-    global _progress_window
-    if _progress_window is None:
-        _progress_window = TranscriptionProgressWindow()
+def init_progress_window(parent_root):
+    """Initialize the progress window with the parent tkinter root.
+    
+    Must be called from the main GUI thread before using other functions.
+    """
+    global _progress_window, _parent_root
+    _parent_root = parent_root
+    _progress_window = TranscriptionProgressWindow(parent_root)
+    return _progress_window
+
+
+def get_progress_window():
+    """Get the progress window instance (may be None if not initialized)."""
     return _progress_window
 
 
 def show_progress_window():
     """Show the progress window."""
-    window = get_progress_window()
-    window.start()
-    return window
+    if _progress_window:
+        _progress_window.show()
+    return _progress_window
 
 
 def hide_progress_window():
-    """Hide/stop the progress window."""
-    global _progress_window
+    """Hide the progress window."""
     if _progress_window:
-        _progress_window.stop()
-        _progress_window = None
-
-
-# Test code
-if __name__ == "__main__":
-    import time
-    
-    window = show_progress_window()
-    time.sleep(0.5)
-    
-    window.set_file("C:\\Users\\Test\\Documents\\0726 Movement Exercise.mp4")
-    window.set_status("Transcribing...")
-    window.set_file_progress(1, 5)
-    
-    # Simulate progress
-    for i in range(101):
-        window.set_progress(i)
-        if i % 10 == 0:
-            window.set_text(f"This is sample transcription text at {i}% progress...")
-        time.sleep(0.05)
-    
-    window.set_status("Complete!")
-    time.sleep(2)
-    hide_progress_window()
+        _progress_window.hide()

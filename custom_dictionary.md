@@ -374,3 +374,84 @@ Thank you, Thank you, Thank you ->
 Thank you, Thank you -> 
 ```
 
+
+## Sanskrit/Hindu Terms (Bhagavad Gita)
+```
+derma -> dharma
+the derma -> the dharma
+our derma -> our dharma
+arthra -> artha
+the arthra -> the artha
+moksha -> moksha
+the moksha -> the moksha
+sapma -> sattva
+the sapma -> the sattva
+baragas -> rajas
+the baragas -> the rajas
+tarnas -> tamas
+the tarnas -> the tamas
+kshetra -> kshetra
+the kshetra -> the kshetra
+kshetrajna -> kshetrajna
+the kshetrajna -> the kshetrajna
+puditra -> Krishna
+purusha -> Purusha
+the purusha -> the Purusha
+prakriti -> Prakriti
+the prakriti -> the Prakriti
+prakritia -> Prakriti
+guna -> guna
+gunas -> gunas
+the gunas -> the gunas
+gita -> Gita
+the gita -> the Gita
+bhagavad gita -> Bhagavad Gita
+the bhagavad gita -> the Bhagavad Gita
+bhagavad -> Bhagavad
+baghdad -> Bhagavad
+arjuna -> Arjuna
+arjun -> Arjuna
+krishna -> Krishna
+the krishna -> the Krishna
+vedas -> Vedas
+the vedas -> the Vedas
+vedic -> Vedic
+upanishads -> Upanishads
+the upanishads -> the Upanishads
+brahman -> Brahman
+the brahman -> the Brahman
+atman -> Atman
+the atman -> the Atman
+maya -> Maya
+the maya -> the Maya
+mayor which deludes -> maya which deludes
+buddhi -> buddhi
+the buddhi -> the buddhi
+manas -> manas
+ahankara -> ahankara
+jnana yoga -> Jnana yoga
+raja yoga -> Raja yoga
+hatha yoga -> Hatha yoga
+aryans -> Aryans
+the aryans -> the Aryans
+aryan -> Aryan
+```
+
+## Proper Nouns - Historical Figures
+```
+oregon -> Origen
+max plank -> Max Planck
+planck -> Planck
+plank's constant -> Planck's constant
+planck's constant -> Planck's constant
+dale carnegie -> Dale Carnegie
+juggernaut -> Juggernaut
+the juggernaut -> the Juggernaut
+```
+
+## Physics/Science Terms
+```
+thanks constant -> Planck's constant
+plank's constant -> Planck's constant
+joule seconds -> joule-seconds
+```

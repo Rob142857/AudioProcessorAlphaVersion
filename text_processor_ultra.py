@@ -340,6 +340,17 @@ class UltraTextProcessor:
             r"\bor\s+or\b": "or",
             r"\bbut\s+but\b": "but",
             
+            # Fix excessive word repetition (Whisper hallucination: "yes, yes, yes, yes...")
+            # Reduce 4+ repetitions of same word to max 2
+            r'\b(yes)(?:[,\s]+\1){3,}\b': r'\1, \1',
+            r'\b(no)(?:[,\s]+\1){3,}\b': r'\1, \1', 
+            r'\b(okay|ok)(?:[,\s]+\1){3,}\b': r'\1, \1',
+            r'\b(right)(?:[,\s]+\1){3,}\b': r'\1, \1',
+            r'\b(well)(?:[,\s]+\1){3,}\b': r'\1, \1',
+            r'\b(so)(?:[,\s]+\1){3,}\b': r'\1, \1',
+            r'\b(now)(?:[,\s]+\1){3,}\b': r'\1, \1',
+            r'\b(thank you)(?:[,\s]+\1){2,}': r'\1',
+            
             # Fix repeated punctuation - EXPANDED
             r'[.]{3,}': '...',
             r'[!]{2,}': '!',

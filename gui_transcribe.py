@@ -23,10 +23,11 @@ TKINTER_AVAILABLE = True
 
 # Progress window for live transcription display
 try:
-    from progress_window import show_progress_window, hide_progress_window, get_progress_window
+    from progress_window import init_progress_window, show_progress_window, hide_progress_window, get_progress_window
     PROGRESS_WINDOW_AVAILABLE = True
 except ImportError:
     PROGRESS_WINDOW_AVAILABLE = False
+    def init_progress_window(root): return None
     def show_progress_window(): return None
     def hide_progress_window(): pass
     def get_progress_window(): return None
@@ -90,9 +91,9 @@ def run_transcription(input_file: str, outdir: Optional[str], output_queue: queu
             import gc
             import psutil
             import torch
-            import sys
 
-            # Force garbage collection
+            # Force garbage collection (run twice for cyclic references)
+            gc.collect()
             collected = gc.collect()
             print(f"   Garbage collected: {collected} objects")
 
@@ -102,20 +103,8 @@ def run_transcription(input_file: str, outdir: Optional[str], output_queue: queu
                 torch.cuda.synchronize()  # Ensure all operations complete
                 print("   GPU cache cleared")
 
-            # Clear any cached modules that might be holding memory (exclude torch)
-            modules_to_clear = []
-            for module_name in sys.modules:
-                if module_name.startswith(('whisper', 'transformers')):
-                    modules_to_clear.append(module_name)
-
-            for module_name in modules_to_clear:
-                if module_name in sys.modules:
-                    del sys.modules[module_name]
-                    print(f"   Cleared cached module: {module_name}")
-
-            # Force another garbage collection
-            collected2 = gc.collect()
-            print(f"   Additional garbage collected: {collected2} objects")
+            # NOTE: We do NOT delete cached modules here - that's dangerous
+            # and can cause hangs or corrupted state. Let Python manage modules.
 
             # Monitor memory usage
             process = psutil.Process(os.getpid())
@@ -168,43 +157,29 @@ def run_transcription(input_file: str, outdir: Optional[str], output_queue: queu
             import gc
             import psutil
             import torch
-            import sys
 
-            # Force garbage collection
+            # Force garbage collection (run twice for cyclic references)
+            gc.collect()
             collected = gc.collect()
             print(f"   Post-processing garbage collected: {collected} objects")
 
-            # Clear GPU cache aggressively
+            # Clear GPU cache
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
                 print("   GPU cache cleared after processing")
 
-                # Force release of any remaining GPU memory
+                # Check if GPU memory is still allocated (informational only)
                 try:
-                    torch.cuda.empty_cache()
-                    if torch.cuda.memory_allocated() > 0:
-                        print("   Warning: Some GPU memory still allocated")
+                    allocated_gb = torch.cuda.memory_allocated() / 1024**3
+                    if allocated_gb > 0.1:  # More than 100MB still allocated
+                        print(f"   Note: {allocated_gb:.2f} GB GPU memory still allocated (normal for cached model)")
                 except:
                     pass
 
-            # Clear cached modules again (exclude torch)
-            modules_to_clear = []
-            for module_name in sys.modules:
-                if module_name.startswith(('whisper', 'transformers')):
-                    modules_to_clear.append(module_name)
-
-            for module_name in modules_to_clear:
-                if module_name in sys.modules:
-                    try:
-                        del sys.modules[module_name]
-                        print(f"   Cleared cached module: {module_name}")
-                    except:
-                        pass  # Some modules can't be deleted
-
-            # Final garbage collection
-            collected_final = gc.collect()
-            print(f"   Final garbage collected: {collected_final} objects")
+            # NOTE: We do NOT delete cached modules - this is dangerous and can
+            # cause hangs, corrupted state, or require expensive re-initialization.
+            # Python's garbage collector handles unused objects automatically.
 
             # Monitor final memory usage
             process = psutil.Process(os.getpid())
@@ -322,6 +297,13 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
             root.state('zoomed')
         except Exception:
             pass
+
+        # Initialize progress window (must be done from main GUI thread)
+        if PROGRESS_WINDOW_AVAILABLE:
+            try:
+                init_progress_window(root)
+            except Exception as e:
+                print(f"Note: Progress window init failed: {e}")
 
         style = ttk.Style()
         style.configure('Clean.TFrame', background='#f8f9fa')
@@ -567,6 +549,11 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
 
         q = queue.Queue()
         last_progress_line = [""]  # Track last progress line for in-place updates
+        
+        # Track audio duration for progress estimation
+        # Based on benchmarks: large-v3-turbo processes ~24x faster than real-time on GTX 1070 Ti
+        audio_duration_seconds = [0]  # Mutable container for nested function access
+        TRANSCRIPTION_SPEED_RATIO = 24  # Audio seconds processed per wall-clock second
 
         def format_log_message(msg: str) -> str:
             """Format log message, handling progress bar updates."""
@@ -577,6 +564,40 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
             # Detect tqdm-style progress bars and our custom progress bars
             progress_indicators = ['%|', '█', '░', '/s]', 'iB/s', 'frames/s', 'it/s']
             return any(ind in msg for ind in progress_indicators)
+        
+        def parse_duration_to_seconds(duration_str: str) -> float:
+            """Parse duration string like '01:54:26.64' or '06:45.19' to seconds."""
+            try:
+                import re
+                # Match HH:MM:SS.ms or MM:SS.ms
+                match = re.search(r'(\d+):(\d+):(\d+(?:\.\d+)?)', duration_str)
+                if match:
+                    hours, mins, secs = match.groups()
+                    return int(hours) * 3600 + int(mins) * 60 + float(secs)
+                match = re.search(r'(\d+):(\d+(?:\.\d+)?)', duration_str)
+                if match:
+                    mins, secs = match.groups()
+                    return int(mins) * 60 + float(secs)
+            except:
+                pass
+            return 0
+        
+        def parse_elapsed_to_seconds(elapsed_str: str) -> float:
+            """Parse elapsed time like '2:40' or '30s' to seconds."""
+            try:
+                import re
+                # Match M:SS format
+                match = re.search(r'(\d+):(\d+)', elapsed_str)
+                if match:
+                    mins, secs = match.groups()
+                    return int(mins) * 60 + int(secs)
+                # Match XXs format
+                match = re.search(r'(\d+)s', elapsed_str)
+                if match:
+                    return int(match.group(1))
+            except:
+                pass
+            return 0
 
         def poll_queue():
             try:
@@ -597,30 +618,65 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                                     pass
                     
                     # Update progress window with transcribed text
-                    # Transcribed text lines start with spaces (e.g., "   Some transcribed words...")
-                    if PROGRESS_WINDOW_AVAILABLE and msg.startswith('   ') and len(msg.strip()) > 5:
-                        try:
-                            pw = get_progress_window()
-                            if pw:
-                                pw.set_text(msg.strip())
-                        except:
-                            pass
-                    
-                    # Update progress bar from segment completion messages
-                    # e.g., "📊 Completed 10/50 segments" or "📊 Processed 5 segments..."
-                    if PROGRESS_WINDOW_AVAILABLE and 'Completed' in msg and 'segments' in msg:
-                        try:
-                            import re
-                            match = re.search(r'(\d+)/(\d+)\s+segments', msg)
-                            if match:
-                                completed = int(match.group(1))
-                                total = int(match.group(2))
-                                percent = (completed / total * 100) if total > 0 else 0
-                                pw = get_progress_window()
-                                if pw:
-                                    pw.set_progress(percent)
-                        except:
-                            pass
+                    # Transcribed text lines start with spaces OR contain transcribed content
+                    if PROGRESS_WINDOW_AVAILABLE:
+                        pw = get_progress_window()
+                        if pw:
+                            # Capture audio duration from log (e.g., "⏱️  Duration: 01:54:26.64")
+                            if '⏱️' in msg and 'Duration:' in msg:
+                                dur_secs = parse_duration_to_seconds(msg)
+                                if dur_secs > 0:
+                                    audio_duration_seconds[0] = dur_secs
+                            
+                            # Estimate progress from elapsed time (e.g., "⏳ Transcribing: 2:40 | GPU:")
+                            if '⏳ Transcribing:' in msg and audio_duration_seconds[0] > 0:
+                                try:
+                                    import re
+                                    # Extract elapsed time
+                                    match = re.search(r'Transcribing:\s*([0-9:]+s?)', msg)
+                                    if match:
+                                        elapsed_secs = parse_elapsed_to_seconds(match.group(1))
+                                        if elapsed_secs > 0:
+                                            # Estimate: elapsed * speed_ratio = audio processed
+                                            estimated_audio_processed = elapsed_secs * TRANSCRIPTION_SPEED_RATIO
+                                            percent = min(95, (estimated_audio_processed / audio_duration_seconds[0]) * 100)
+                                            pw.set_progress(percent)
+                                            pw.set_status(f"Transcribing... {int(percent)}%")
+                                except:
+                                    pass
+                            
+                            # Detect transcribed text (starts with spaces, or is plain text without emoji)
+                            stripped = msg.strip()
+                            if (msg.startswith('   ') and len(stripped) > 5) or \
+                               (len(stripped) > 20 and not any(c in msg for c in '📊✅❌⚠️🔄🧹💾📄🎵⏱⏳')) :
+                                try:
+                                    pw.set_text(stripped[:80])
+                                except:
+                                    pass
+                            
+                            # Update progress from segment messages (multiple patterns)
+                            if 'segments' in msg.lower():
+                                try:
+                                    import re
+                                    # Pattern 1: "Completed X/Y segments" or "kept X/Y segments"
+                                    match = re.search(r'(\d+)/(\d+)\s*segments', msg)
+                                    if match:
+                                        completed = int(match.group(1))
+                                        total = int(match.group(2))
+                                        percent = (completed / total * 100) if total > 0 else 0
+                                        pw.set_progress(percent)
+                                except:
+                                    pass
+                            
+                            # Reset progress for new file (detect "[X / Y] Processing:")
+                            if '] Processing:' in msg:
+                                audio_duration_seconds[0] = 0
+                                pw.set_progress(0)
+                            
+                            # Set 100% on completion
+                            if 'TRANSCRIPTION COMPLETE' in msg or '🎉' in msg:
+                                pw.set_progress(100)
+                                pw.set_status("Complete!")
                     
                     # Skip noisy tqdm intermediate updates (keep only significant ones)
                     if is_progress_line(msg):
