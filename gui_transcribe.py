@@ -515,12 +515,22 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
         
         model_combo.bind('<<ComboboxSelected>>', on_model_change)
 
-        # Row 11: Compact description
+        # Row 11: Initial prompt for context (helps with specialized vocabulary)
+        tk.Label(combined_frame, text="Context hint (optional):", bg='white', fg='#374151', font=('Segoe UI', 10)).grid(column=0, row=11, sticky='w', padx=20, pady=(8, 6))
+        initial_prompt_var = tk.StringVar(value=proj_settings.get("initial_prompt", ""))
+        initial_prompt_entry = tk.Entry(combined_frame, textvariable=initial_prompt_var, font=('Segoe UI', 9), width=70, bg='#f9fafb', fg='#111827', relief='flat')
+        initial_prompt_entry.grid(column=1, row=11, columnspan=3, sticky='w', padx=(12, 20), pady=(8, 6))
+        
+        # Tooltip/hint for initial prompt
+        prompt_hint = tk.Label(combined_frame, text="💡 E.g. 'Lecture on esoteric philosophy, Gurdjieff Work, Fourth Way teachings'", bg='white', fg='#6b7280', font=('Segoe UI', 8))
+        prompt_hint.grid(column=1, row=12, columnspan=3, sticky='w', padx=(12, 20), pady=(0, 6))
+
+        # Row 13: Compact description
         desc = (
             "Auto device (CUDA/DirectML/CPU) • Faster-Whisper/Distil-Whisper for speed\n"
             "Outputs saved next to source file(s)."
         )
-        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=11, columnspan=4, sticky='w', padx=20, pady=(8, 16))
+        ttk.Label(combined_frame, text=desc, background='white', foreground='#374151', font=('Segoe UI', 9), wraplength=920, justify='left').grid(column=0, row=13, columnspan=4, sticky='w', padx=20, pady=(8, 16))
 
         # Handlers attached to the buttons above
 
@@ -760,6 +770,7 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                         proj_settings["quality_mode"] = quality_mode_var.get()
                         proj_settings["max_repeat_cap"] = max_repeat_var.get()
                         proj_settings["whisper_model"] = model_choice_var.get()
+                        proj_settings["initial_prompt"] = initial_prompt_var.get()
                         _save_project_settings(current_folder, proj_settings)
                         
                     except Exception as e:
@@ -788,6 +799,18 @@ def launch_gui(default_outdir: Optional[str] = None, *, default_threads: Optiona
                     try:
                         selected_model = model_choice_var.get()
                         os.environ["TRANSCRIBE_MODEL_NAME"] = selected_model
+                    except Exception:
+                        pass
+
+                    # Apply initial prompt for context hints
+                    try:
+                        prompt = initial_prompt_var.get().strip()
+                        if prompt:
+                            os.environ["TRANSCRIBE_ALLOW_PROMPT"] = "1"
+                            os.environ["TRANSCRIBE_INITIAL_PROMPT"] = prompt
+                        else:
+                            os.environ.pop("TRANSCRIBE_ALLOW_PROMPT", None)
+                            os.environ.pop("TRANSCRIBE_INITIAL_PROMPT", None)
                     except Exception:
                         pass
 

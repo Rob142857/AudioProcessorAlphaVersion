@@ -1409,19 +1409,64 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         txt_path = None
 
     try:
-        doc = Document()
-        doc.add_heading(f'{base_name}', 0)
+        from docx import Document
+        from docx.shared import Pt, Inches, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+        from docx.enum.style import WD_STYLE_TYPE
+        import datetime
         
-        # Add model and location info
+        doc = Document()
+        
+        # Set document properties/metadata
+        core_props = doc.core_properties
+        core_props.author = "Audio Transcription Tool"
+        core_props.title = base_name
+        core_props.subject = "Transcription"
+        core_props.created = datetime.datetime.now()
+        core_props.keywords = "transcription, audio, speech-to-text"
+        
+        # Set document margins (narrower for more content)
+        for section in doc.sections:
+            section.top_margin = Inches(0.75)
+            section.bottom_margin = Inches(0.75)
+            section.left_margin = Inches(1.0)
+            section.right_margin = Inches(1.0)
+        
+        # Configure default paragraph style
+        style = doc.styles['Normal']
+        font = style.font
+        font.name = 'Calibri'
+        font.size = Pt(11)
+        para_format = style.paragraph_format
+        para_format.space_after = Pt(8)
+        para_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+        para_format.line_spacing = 1.15
+        
+        # Add title
+        title = doc.add_heading(f'{base_name}', 0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Add metadata in smaller italic text
         parent_folder = os.path.basename(os.path.dirname(input_path))
-        doc.add_paragraph(f'Model: {selected_model_name}')
-        doc.add_paragraph(f'Folder: {parent_folder}')
-        doc.add_paragraph('')
+        meta_para = doc.add_paragraph()
+        meta_run = meta_para.add_run(f'Model: {selected_model_name}  •  Source: {parent_folder}')
+        meta_run.font.size = Pt(9)
+        meta_run.font.italic = True
+        meta_run.font.color.rgb = RGBColor(128, 128, 128)
+        meta_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
         elapsed_total = time.time() - start_time
         if os.environ.get("TRANSCRIBE_HIDE_TIME", "").lower() not in ("1", "true", "yes"):
-            doc.add_paragraph(f'Transcription time: {format_duration_hms(elapsed_total)}')
-            doc.add_paragraph('')
+            time_para = doc.add_paragraph()
+            time_run = time_para.add_run(f'Transcription time: {format_duration_hms(elapsed_total)}')
+            time_run.font.size = Pt(9)
+            time_run.font.italic = True
+            time_run.font.color.rgb = RGBColor(128, 128, 128)
+            time_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Add separator line
+        doc.add_paragraph('─' * 50).alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_paragraph('')  # Spacing
 
         if _is_verbatim_mode():
             # Preserve raw text as a single block to avoid reflow changes
@@ -1429,7 +1474,9 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
         else:
             for para in formatted_text.split("\n\n"):
                 if para.strip():
-                    doc.add_paragraph(para.strip())
+                    p = doc.add_paragraph(para.strip())
+                    p.paragraph_format.first_line_indent = Inches(0.25)
+        
         doc.save(docx_path)
         print(f"✅ Word document saved: {docx_path}")
     except Exception as e:
@@ -2069,7 +2116,16 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
     # Build optional initial prompt from awkward words
     awkward_terms = load_awkward_terms(input_path)
     initial_prompt = build_initial_prompt(awkward_terms)
-    if initial_prompt:
+    
+    # Combine with GUI-provided context hint if available
+    gui_prompt = os.environ.get("TRANSCRIBE_INITIAL_PROMPT", "").strip()
+    if gui_prompt:
+        if initial_prompt:
+            initial_prompt = f"{gui_prompt}. {initial_prompt}"
+        else:
+            initial_prompt = gui_prompt
+        print(f"🎯 Context hint: '{gui_prompt}'")
+    elif initial_prompt:
         preview = initial_prompt[:100]
         print(f"🧩 Using domain terms bias (initial_prompt): '{preview}...'")
 
@@ -2617,16 +2673,29 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             
             # Tune defaults when using faster-whisper to avoid over-pruning
             if using_fw:
-                # Greedy capture but still apply repetition guard by disabling conditioning
-                transcribe_kwargs["beam_size"] = 1
-                transcribe_kwargs.pop("patience", None)
-                transcribe_kwargs["best_of"] = 1
-                transcribe_kwargs["no_speech_threshold"] = 0.25
-                # Keep compression ratio guard off to avoid over-pruning empty results for FW
-                transcribe_kwargs["compression_ratio_threshold"] = None
-                transcribe_kwargs["vad_filter"] = False
-                transcribe_kwargs["chunk_length"] = 30
-                print("🎯 FW tuning: greedy decode, repetition guard (no conditioning), chunk_length=30")
+                # Check if quality mode is enabled - if so, use high-quality beam search
+                if quality_mode:
+                    # MAXIMUM Quality mode: aggressive beam search for best accuracy
+                    transcribe_kwargs["beam_size"] = 10  # Maximum beam width
+                    transcribe_kwargs["best_of"] = 10    # Try many candidates
+                    transcribe_kwargs["patience"] = 2.0  # Wait longer for better results
+                    transcribe_kwargs["no_speech_threshold"] = 0.4  # Less aggressive silence detection
+                    transcribe_kwargs["compression_ratio_threshold"] = 2.4
+                    transcribe_kwargs["log_prob_threshold"] = -0.8  # Accept higher confidence only
+                    transcribe_kwargs["vad_filter"] = False
+                    transcribe_kwargs["chunk_length"] = 30
+                    print("🎯 FW MAXIMUM QUALITY: beam_size=10, best_of=10, patience=2.0, log_prob=-0.8")
+                else:
+                    # Greedy capture but still apply repetition guard by disabling conditioning
+                    transcribe_kwargs["beam_size"] = 1
+                    transcribe_kwargs.pop("patience", None)
+                    transcribe_kwargs["best_of"] = 1
+                    transcribe_kwargs["no_speech_threshold"] = 0.25
+                    # Keep compression ratio guard off to avoid over-pruning empty results for FW
+                    transcribe_kwargs["compression_ratio_threshold"] = None
+                    transcribe_kwargs["vad_filter"] = False
+                    transcribe_kwargs["chunk_length"] = 30
+                    print("🎯 FW tuning: greedy decode (fast mode)")
             
             # Gate initial prompt behind explicit opt-in to preserve strict verbatim neutrality
             if initial_prompt and str(os.environ.get("TRANSCRIBE_ALLOW_PROMPT", "0")).lower() in ("1","true","yes"):

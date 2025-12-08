@@ -455,3 +455,15 @@ thanks constant -> Planck's constant
 plank's constant -> Planck's constant
 joule seconds -> joule-seconds
 ```
+
+
+## Fourth Way / Esoteric Context
+```
+this word at all -> this Work at all
+study this word -> study this Work
+old age very teaching -> old esoteric teaching
+age very teaching -> esoteric teaching
+every pheasant thing -> every pleasant thing
+every un-pheasant thing -> every unpleasant thing
+un-pheasant -> unpleasant
+```
