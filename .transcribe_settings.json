@@ -116,8 +116,8 @@
       "time_header": 1,
       "quality_mode": 1,
       "max_repeat_cap": 3,
-      "whisper_model": "large-v3-turbo",
-      "initial_prompt": "Lecture on spiritual teachning and fourth way teaching by Dr Groves"
+      "whisper_model": "large-v3",
+      "initial_prompt": "Lecture on Fourth Way teaching"
     }
   }
 }

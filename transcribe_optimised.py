@@ -239,11 +239,11 @@ def preprocess_audio_with_padding(input_path: str, temp_dir: str = None) -> str:
         # Choose conservative vs strong filters based on env (default: conservative)
         strong_filters = str(os.environ.get("TRANSCRIBE_PREPROC_STRONG_FILTERS", "")).strip() in ("1", "true", "True")
         if strong_filters:
-            # Legacy/strong filtering for very noisy tapes
-            afilters = "adelay=1000|1000,highpass=f=80,lowpass=f=8000,afftdn=nf=-25,loudnorm,apad=pad_len=48000"
+            # Legacy/strong filtering for very noisy tapes (adds ~1.5s padding on both ends)
+            afilters = "adelay=1500|1500,highpass=f=80,lowpass=f=8000,afftdn=nf=-25,loudnorm,apad=pad_len=72000"
         else:
-            # Conservative: light padding + loudness normalization only (preserves fidelity)
-            afilters = "adelay=500|500,loudnorm,apad=pad_len=24000"
+            # Conservative: light EQ + loudness normalization with ~1.2s padding either side
+            afilters = "adelay=1200|1200,loudnorm,apad=pad_len=57600"
 
         # FFmpeg command to:
         # 1) Add brief silence padding to prevent start/end truncation
@@ -853,6 +853,28 @@ def _clean_repetitions_in_segment(text: str, max_phrase_repeats: int = 2) -> str
         return text
 
 
+def _collapse_single_word_runs(text: str, max_repeats: int = 2) -> str:
+    """Collapse stutters like "the the the" down to at most max_repeats.
+
+    Keeps casing of the first occurrence and preserves spacing minimally.
+    """
+    try:
+        pattern = r"\b([A-Za-z']{1,20})\b(?:\s+\1\b){" + str(max_repeats) + r",}"
+
+        def repl(m):
+            w = m.group(1)
+            return " ".join([w] * max_repeats)
+
+        for _ in range(2):
+            new_text = re.sub(pattern, repl, text, flags=re.IGNORECASE)
+            if new_text == text:
+                break
+            text = new_text
+        return text
+    except Exception:
+        return text
+
+
 def _segments_to_paragraphs(segments: list, gap_threshold: float = 1.2) -> str:
     """Build coherent paragraphs from Whisper segments without altering words.
 
@@ -1421,6 +1443,7 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             full_text = pm.restore_punctuation(full_text)
             t2 = time.time()
             print(f"✅ Punctuation restoration completed (passes: 2 | {t1 - t0:.1f}s + {t2 - t1:.1f}s)")
+            full_text = _collapse_single_word_runs(full_text, max_repeats=2)
             # Break long sentences to avoid run-ons before further cleanup
             full_text = _split_long_sentences(full_text, max_chars=170)
             full_text = _fix_whisper_artifacts(full_text)
@@ -3082,6 +3105,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 except Exception as punc_e:
                     print(f"⚠️  Punctuation pre-pass unavailable: {punc_e} — proceeding with ULTRA-only punctuation fixes")
                 full_text = ultra_processor.process_text_ultra(full_text, passes=6)
+                full_text = _collapse_single_word_runs(full_text, max_repeats=2)
                 full_text = _split_long_sentences(full_text, max_chars=170)
                 t1 = time.time()
                 print(f"✅ Ultra text processing completed ({t1 - t0:.1f}s)")
@@ -3115,6 +3139,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     full_text = processor.restore_punctuation(full_text)
                     t1 = time.time()
                     print(f"✅ Enhanced punctuation restoration completed (3 passes | {t1 - t0:.1f}s)")
+                    full_text = _collapse_single_word_runs(full_text, max_repeats=2)
                     full_text = _split_long_sentences(full_text, max_chars=170)
                     full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
                     full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
@@ -3143,6 +3168,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     full_text = pm.restore_punctuation(full_text)
                     t1 = time.time()
                     print(f"✅ Basic punctuation restoration completed (4 passes | {t1 - t0:.1f}s)")
+                    full_text = _collapse_single_word_runs(full_text, max_repeats=2)
                     full_text = _split_long_sentences(full_text, max_chars=170)
                     full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
                     full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
