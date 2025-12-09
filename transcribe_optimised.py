@@ -100,7 +100,7 @@ def _apply_recommended_env_defaults() -> None:
     defaults = {
         # Fidelity & formatting
         "TRANSCRIBE_VERBATIM": "0",            # Enable post-processing for better punctuation/formatting
-        "TRANSCRIBE_PARAGRAPH_GAP": "1.5",     # Silence gap (seconds) for paragraph breaks (slightly longer for clearer breaks)
+        "TRANSCRIBE_PARAGRAPH_GAP": "1.8",     # Silence gap (seconds) for paragraph breaks (nudge up for clearer topic shifts)
         # Model selection
         "TRANSCRIBE_MODEL_NAME": "large-v3-turbo",   # Turbo model for good speed/accuracy balance
         # GPU safety / fragmentation mitigation
@@ -859,8 +859,19 @@ def _segments_to_paragraphs(segments: list, gap_threshold: float = 1.2) -> str:
     Rules:
       - Start a new paragraph when the gap between segments >= gap_threshold seconds
       - Also break when a segment ends with terminal punctuation and the next segment starts a new sentence
+      - Break on likely topic-shift starters ("now", "so", "however", etc.)
+      - Break very long runs to avoid multi-topic run-ons
       - Preserve original segment text (except for in-segment repetition cleanup)
     """
+    topic_starters = (
+        "now", "so", "but", "however", "anyway", "well", "right now", "alright", "okay", "ok",
+        "in summary", "in conclusion", "to summarise", "to summarize"
+    )
+
+    def looks_like_topic_shift(text: str) -> bool:
+        t = text.strip().lower().lstrip("\"'`“”‘’")
+        return any(t.startswith(starter + " ") or t == starter for starter in topic_starters)
+
     paras: list[str] = []
     curr: list[str] = []
     prev_end = None
@@ -878,9 +889,14 @@ def _segments_to_paragraphs(segments: list, gap_threshold: float = 1.2) -> str:
             new_para = True
         elif curr:
             # if previous chunk ends with .!? and current begins with capital letter
-            if curr[-1][-1:] in ".!?":
-                if txt and txt[0].isupper():
+            if curr[-1][-1:] in ".!?" and txt:
+                if txt[0].isupper():
                     new_para = True
+            # topic-shift markers or long paragraphs
+            if looks_like_topic_shift(txt):
+                new_para = True
+            elif len(" ".join(curr)) > 320 and len(txt) > 80:
+                new_para = True
 
         if new_para and curr:
             paras.append(" ".join(curr).strip())
@@ -960,6 +976,48 @@ def _refine_capitalization(text: str) -> str:
         return ''.join(refined_sentences)
     except Exception as e:
         print(f"⚠️  Capitalization refinement failed: {e}")
+        return text
+
+
+def _split_long_sentences(text: str, max_chars: int = 170) -> str:
+    """Break overly long sentences into smaller chunks by word budget.
+
+    - Splits on whitespace; starts a new sentence when the running length exceeds max_chars.
+    - Appends a period to chunks that do not already end with terminal punctuation.
+    - Keeps original words; only inserts breaks to avoid run-on paragraphs.
+    """
+    try:
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        out: list[str] = []
+        for s in sentences:
+            if not s:
+                continue
+            if len(s) <= max_chars:
+                out.append(s)
+                continue
+
+            words = s.split()
+            cur: list[str] = []
+            cur_len = 0
+            for w in words:
+                add_len = len(w) + (1 if cur else 0)
+                if cur and cur_len + add_len > max_chars:
+                    chunk = " ".join(cur).strip()
+                    if chunk and chunk[-1] not in ".!?":
+                        chunk += "."
+                    out.append(chunk)
+                    cur = [w]
+                    cur_len = len(w)
+                else:
+                    cur.append(w)
+                    cur_len += add_len
+            if cur:
+                chunk = " ".join(cur).strip()
+                if chunk and chunk[-1] not in ".!?":
+                    chunk += "."
+                out.append(chunk)
+        return " ".join(out)
+    except Exception:
         return text
 
 
@@ -1363,6 +1421,8 @@ def transcribe_with_dataset_optimization(input_path: str, output_dir=None, threa
             full_text = pm.restore_punctuation(full_text)
             t2 = time.time()
             print(f"✅ Punctuation restoration completed (passes: 2 | {t1 - t0:.1f}s + {t2 - t1:.1f}s)")
+            # Break long sentences to avoid run-ons before further cleanup
+            full_text = _split_long_sentences(full_text, max_chars=170)
             full_text = _fix_whisper_artifacts(full_text)
             full_text = _refine_capitalization(full_text)
             full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
@@ -2962,8 +3022,8 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
             # Assemble text. In verbatim mode, prefer coherent paragraphs built from segment timings.
             para_text = None
             try:
-                if _is_verbatim_mode() and cleaned_segments:
-                    gap = float(os.environ.get("TRANSCRIBE_PARAGRAPH_GAP", "1.2"))
+                if cleaned_segments:
+                    gap = float(os.environ.get("TRANSCRIBE_PARAGRAPH_GAP", "1.8"))
                     para_text = _segments_to_paragraphs(cleaned_segments, gap_threshold=gap)
             except Exception as _e:
                 para_text = None
@@ -3022,6 +3082,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                 except Exception as punc_e:
                     print(f"⚠️  Punctuation pre-pass unavailable: {punc_e} — proceeding with ULTRA-only punctuation fixes")
                 full_text = ultra_processor.process_text_ultra(full_text, passes=6)
+                full_text = _split_long_sentences(full_text, max_chars=170)
                 t1 = time.time()
                 print(f"✅ Ultra text processing completed ({t1 - t0:.1f}s)")
                 full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
@@ -3054,6 +3115,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     full_text = processor.restore_punctuation(full_text)
                     t1 = time.time()
                     print(f"✅ Enhanced punctuation restoration completed (3 passes | {t1 - t0:.1f}s)")
+                    full_text = _split_long_sentences(full_text, max_chars=170)
                     full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
                     full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
                     full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)
@@ -3081,6 +3143,7 @@ def transcribe_file_simple_auto(input_path, output_dir=None, threads_override: O
                     full_text = pm.restore_punctuation(full_text)
                     t1 = time.time()
                     print(f"✅ Basic punctuation restoration completed (4 passes | {t1 - t0:.1f}s)")
+                    full_text = _split_long_sentences(full_text, max_chars=170)
                     full_text, early_artifact_stats = _remove_extended_artifacts(full_text)
                     full_text = _refine_capitalization(_fix_whisper_artifacts(full_text))
                     full_text = _collapse_sentence_repetitions(full_text, max_repeats=3)

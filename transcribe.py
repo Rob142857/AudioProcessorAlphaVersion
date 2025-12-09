@@ -128,9 +128,18 @@ def split_into_paragraphs(text, max_length=500):
         "Apr.", "Aug.", "Sept.", "Oct.", "Nov.", "Dec."
     }
 
+    topic_starters = (
+        "now", "so", "but", "however", "anyway", "well", "right now", "alright", "okay", "ok",
+        "in summary", "in conclusion", "to summarise", "to summarize"
+    )
+
     bullet_re = re.compile(r"^\s*(?:[-*•]\s+|\d+[\.)]\s+)")
     # Sentence split (rough): break after ., !, ? followed by whitespace and a capital/quote/open paren
     sentence_split_re = re.compile(r"(?<=[.!?])[\)]?\"?'?\s+(?=[\"'\(A-Z0-9])")
+
+    def looks_like_topic_shift(s: str) -> bool:
+        t = s.strip().lower().lstrip("\"'`“”‘’")
+        return any(t.startswith(starter + " ") or t == starter for starter in topic_starters)
 
     def is_abbrev_end(s: str) -> bool:
         s = s.strip()
@@ -181,11 +190,12 @@ def split_into_paragraphs(text, max_length=500):
         cur = []
         cur_len = 0
         max_chars_per_para = 800
-        max_sentences_per_para = 5
+        max_sentences_per_para = 4
 
         for s in sentences:
-            # Start new para if adding would exceed limits
-            if cur and (len(s) + cur_len > max_chars_per_para or len(cur) >= max_sentences_per_para):
+            shift = looks_like_topic_shift(s)
+            # Start new para if adding would exceed limits or likely topic shift
+            if cur and (shift or len(s) + cur_len > max_chars_per_para or len(cur) >= max_sentences_per_para):
                 paragraphs.append(" ".join(cur).strip())
                 cur = []
                 cur_len = 0
